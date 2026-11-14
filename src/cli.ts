@@ -8,7 +8,7 @@
  *   collect <input.md> <translations.json>   收 agent 译文 → 原子拼装双语文件
  *   verify  <input.md> [output.md]            校验输出完整性，JSON 报告
  *
- * agent 工作流：split → 对每个块 doubao → agent 参考豆包+TRANSLATION_STANDARD.md
+ * agent 工作流：split → 对每个块 doubao → agent 参考豆包+翻译标准（docs/USING.md）
  * 自己定稿 → collect → verify，失败按报告修复后重跑 collect。
  */
 import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";

@@ -7,7 +7,7 @@ This project is **not one auto-running pipeline**. The mechanical steps
 (chunking, sentence split, Doubao calls, assembly, verification) are five
 standalone CLI subcommands. An agent calls them step by step. Doubao gives
 a translation and an explanation; the agent merges them into the final
-translation, following `TRANSLATION_STANDARD.md`. Code checks the result
+translation, following the standard in `docs/USING.md`. Code checks the result
 for missing content at the end.
 
 ## Architecture
@@ -114,4 +114,5 @@ npm run build   # tsc --noEmit
 | `src/state.ts` | artifacts/state.json resume state |
 | `src/env.ts` | .env parsing and config |
 | `AGENTS.md` | Agent contract: command signatures, JSON shapes, hard rules |
-| `TRANSLATION_STANDARD.md` | Translation standard the agent must follow |
+| `docs/USING.md` | Agent contract: workflow, commands, translation standard |
+| `docs/HACKING.md` | Code contract: architecture, invariants, tests |
