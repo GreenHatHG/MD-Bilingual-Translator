@@ -2,41 +2,55 @@
  * 豆包 HTTP 客户端：接入本地 doubao_server.js（doubao_hook 项目）。
  * - POST /translate {text, to:"zh"} → {ok, translation}
  * - POST /explain   {text}          → {ok, explanation}
- * 失败（网络 / HTTP 非 2xx / ok:false）时重试，最终失败返回 null（调用方按缺参考处理）。
+ * 失败（网络 / HTTP 非 2xx / ok:false）时重试，最终失败直接 throw —— 豆包参考
+ * 是硬性前置（用户决策：a），绝不静默降级。
  * 注意：长文上游可达数分钟，服务端被限流时请求会挂起排队，超时需设足够长。
  */
-export interface DoubaoClient {
-  translate(text: string): Promise<string | null>;
-  explain(text: string): Promise<string | null>;
+import type { Config } from "./env.js";
+
+export interface DoubaoResult {
+  translation: string;
+  explanation: string;
 }
 
-export function createDoubaoClient(baseUrl: string, retries: number, timeoutMs: number): DoubaoClient {
-  const base = baseUrl.replace(/\/+$/, "");
+export class DoubaoError extends Error {}
 
-  async function call(
-    label: string,
-    path: string,
-    body: Record<string, unknown>,
-  ): Promise<string | null> {
+export function createDoubao(config: Config) {
+  const base = config.doubaoBaseUrl;
+
+  async function call(label: string, path: string, body: Record<string, unknown>): Promise<string> {
     let lastErr: unknown;
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= config.doubaoRetries; attempt++) {
       try {
-        return await once(base, path, body, timeoutMs);
+        return await once(base, path, body, config.doubaoTimeoutMs);
       } catch (err) {
         lastErr = err;
-        console.warn(`  [豆包] ${label} 第 ${attempt + 1} 次失败: ${short(err)}`);
-        if (attempt < retries) {
+        if (attempt < config.doubaoRetries) {
           await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         }
       }
     }
-    console.warn(`  [豆包] ${label} 最终失败，忽略该参考: ${short(lastErr)}`);
-    return null;
+    throw new DoubaoError(`豆包 ${label} 最终失败: ${short(lastErr)}`);
   }
 
   return {
-    translate: (text) => call("translate", "/translate", { text, to: "zh" }),
-    explain: (text) => call("explain", "/explain", { text }),
+    /** 直译 + 完整解释，串行取回（用户决策：不并行），任一失败即 throw */
+    async reference(text: string): Promise<DoubaoResult> {
+      return {
+        translation: await call("translate", "/translate", { text, to: "zh" }),
+        explanation: await call("explain", "/explain", { text }),
+      };
+    },
+    /** 健康检查：ok:true 表示豆包页面就绪 */
+    async health(): Promise<boolean> {
+      try {
+        const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(10_000) });
+        const data = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+        return data?.ok === true;
+      } catch {
+        return false;
+      }
+    },
   };
 }
 
