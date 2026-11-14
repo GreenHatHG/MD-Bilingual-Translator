@@ -87,11 +87,13 @@ standard). How to use the two Doubao results:
   the raw translation agree, merge them into the final text directly.
   If they conflict, use the explanation to decide which one is closer
   to the real meaning, and start from that one.
-- **A base is not a copy.** Whatever you start from, rewrite it to
-  native-writer level: restructure the sentence the way Chinese wants
-  it, keep the register and tone. Faithfulness to the source beats any
-  reference. If both candidates are wrong, drop them and translate
-  yourself.
+- **A base is not a copy — but don't rewrite for its own sake.** Start
+  from the best candidate, then fix only real defects: stiff
+  word-by-word phrasing, English word order, broken tone. If a
+  candidate already reads like a native writer and is faithful, use it
+  as-is. Every needless rewrite is a chance to make the text worse.
+  Faithfulness to the source beats any reference. If both candidates
+  are wrong, drop them and translate yourself.
 - **One sentence in, one sentence out.** Do not move content between
   sentences, do not merge or split ids.
 - Write a JSON file (e.g. `translations.json`):
