@@ -1,32 +1,41 @@
-# AGENTS.md — agent 调用契约
+# AGENTS.md — agent contract
 
-本仓库把 Markdown 双语翻译拆成机械步骤（代码）+ 定稿步骤（你，agent）。
-你负责：调用子命令、撮合译文、修复校验问题。你不负责：直接写/改输出文件。
+This repo splits bilingual Markdown translation into mechanical steps
+(code) and arbitration (you, the agent). You: call the subcommands, merge
+translations, fix verification problems. You do NOT: write or edit the
+output file directly.
 
-## 硬性规则
+## Hard rules
 
-- **永远不要直接创建或编辑 `*.bilingual.md`**。输出文件只由 `collect` 写。
-- **豆包参考是硬性前置**：服务不可用时命令会报错退出。不要降级为自己直译——
-  先启动服务（见下），失败就如实报告，不要编造参考。
-- **每句必须定稿**：`collect` 缺任何一句就整体拒绝。不允许跳句、并句、增句。
-- **占位符 ⟦n⟧ 原样保留**在译文对应位置，不翻译、不增删。
-- 所有子命令：stdout 是 JSON（给程序/你解析），stderr 是人读日志。
-- 退出码：0 成功；1 用法/输入错误；2 verify 发现问题。
+- **Never create or edit `*.bilingual.md` yourself.** Only `collect`
+  writes the output file.
+- **Doubao references are a hard prerequisite.** If the service is down,
+  commands exit with an error. Do not fall back to translating alone —
+  start the service (see below). If it still fails, report it honestly.
+  Never invent references.
+- **Every sentence must be finalized.** `collect` rejects the whole batch
+  if one sentence is missing. No skipped, merged, or added sentences.
+- **Keep placeholders ⟦n⟧ as-is** at the right spot in the translation.
+  Do not translate them, do not add or drop them.
+- All subcommands: stdout is JSON (for you to parse), stderr is human
+  logs.
+- Exit codes: 0 = success; 1 = usage/input error; 2 = verify found
+  problems.
 
-## 前置：豆包服务
+## Prerequisite: Doubao service
 
 ```bash
-node /Users/jooooody/Projects/doubao_hook/start_doubao.sh          # 豆包带调试端口启动
-node /Users/jooooody/Projects/doubao_hook/lib/doubao_server.js     # 监听 127.0.0.1:8765
-curl -s localhost:8765/health                                      # ok:true 即就绪
+node /Users/jooooody/Projects/doubao_hook/start_doubao.sh          # Doubao with debug port
+node /Users/jooooody/Projects/doubao_hook/lib/doubao_server.js     # listens on 127.0.0.1:8765
+curl -s localhost:8765/health                                      # ok:true = ready
 ```
 
-单句豆包调用可达数分钟，客户端超时默认 10 分钟（`DOUBAO_TIMEOUT_MS` 可调）。
-调用是串行的，不要尝试并行化。
+One Doubao call can take minutes; client timeout defaults to 10 minutes
+(`DOUBAO_TIMEOUT_MS`). Calls are serial — do not try to parallelize them.
 
-## 工作流（按顺序）
+## Workflow (in order)
 
-### 1. split — 切块 + 拆句
+### 1. split — chunk + sentence split
 
 ```bash
 npx tsx src/cli.ts split input.md
@@ -37,11 +46,14 @@ npx tsx src/cli.ts split input.md
   "sentenceCount": 2, "sentences": [ { "id": 1, "text": "Hello world. " } ] } ] }
 ```
 
-- `code` 无后缀 = 可译块；`p` 后缀 = 直通块（不翻译）；`b` = 空行（忽略）。
-- 句子 id 从 1 起，块内连续。`text` 是掩码还原后的完整原文。
-- 结果已落盘 `artifacts/state.json`，后续步骤按 `code` 引用。
+- `code` with no suffix = translatable; `p` suffix = passthrough (do not
+  translate); `b` = blank lines (ignore).
+- Sentence ids start at 1 and are continuous within a block. `text` is
+  the full source sentence, with masks already restored.
+- The result is saved to `artifacts/state.json`; later steps refer to
+  blocks by `code`.
 
-### 2. doubao — 逐块取参考（贵，逐句落盘，可断点续跑）
+### 2. doubao — fetch references per block (expensive, saved per sentence)
 
 ```bash
 npx tsx src/cli.ts doubao input.md 002
@@ -49,31 +61,37 @@ npx tsx src/cli.ts doubao input.md 002
 
 ```json
 { "code": "002", "cached": false,
-  "refs": { "1": { "translation": "你好，世界。", "explanation": "……markdown 讲解" },
+  "refs": { "1": { "translation": "你好，世界。", "explanation": "……markdown notes" },
             "2": { "translation": "…", "explanation": "…" } } }
 ```
 
-- 串行调 /translate + /explain，每句成功即落盘；中断重跑只补缺句。
-- 全部已取过时返回 `cached: true`，无网络调用。
-- 服务不可用 / 单句最终失败 → exit 1，已取的句子不丢。
+- Serial /translate + /explain calls. Each sentence is written to disk
+  as soon as it arrives; a re-run only fetches missing sentences.
+- If everything was already fetched, returns `cached: true` with no
+  network calls.
+- Service down / a sentence failed for good → exit 1. Fetched sentences
+  are not lost.
 
-### 3. 你定稿 — 撮合译文
+### 3. Arbitrate — merge the final translations
 
-对每块，输入三样：句子原文、豆包直译、豆包完整解释。规则见
-`TRANSLATION_STANDARD.md`（必须先读，它是唯一标准）。要点：
+For each block you get three inputs: the source sentence, the Doubao
+translation, and the Doubao explanation. Follow `TRANSLATION_STANDARD.md`
+(read it first — it is the only standard). Key points:
 
-- 解释里若含豆包自己斟酌的译文，通常优于直译，作定稿底稿；
-  但无论以谁为底稿，都要重写到母语作者水准，忠实性优先。
-- 写出 JSON 文件（如 `translations.json`）：
+- If the explanation contains Doubao's own polished translation, it is
+  usually better than the raw one — use it as the base. But whatever the
+  base is, rewrite it to native-writer level. Faithfulness first.
+- Write a JSON file (e.g. `translations.json`):
 
 ```json
 { "002": { "1": "你好，世界。", "2": "这是一个测试。" },
   "004": { "1": "## 一个标题" } }
 ```
 
-- key 是块 `code`（字符串），value 的 key 是句子 id（字符串）。
+- Outer keys are block `code` strings; inner keys are sentence ids as
+  strings.
 
-### 4. collect — 拼装双语文件
+### 4. collect — assemble the bilingual file
 
 ```bash
 npx tsx src/cli.ts collect input.md translations.json
@@ -83,10 +101,12 @@ npx tsx src/cli.ts collect input.md translations.json
 { "ok": true, "output": "/path/to/input.bilingual.md" }
 ```
 
-- 缺任何一句 → exit 1 并列出 `[{code, sentenceId}]`，不写任何文件。补齐后重跑。
-- 译文里的 ⟦n⟧ 占位符由代码还原为原始内容，你只管按标准保留它们。
+- Any missing sentence → exit 1 with a list `[{code, sentenceId}]`. No
+  file is written. Fill the gaps and re-run.
+- ⟦n⟧ placeholders in your translations are restored to the original
+  content by code. You just keep them in place, per the standard.
 
-### 5. verify — 完整性校验
+### 5. verify — completeness check
 
 ```bash
 npx tsx src/cli.ts verify input.md
@@ -96,12 +116,15 @@ npx tsx src/cli.ts verify input.md
 { "ok": true, "output": "/path/to/input.bilingual.md", "problems": [] }
 ```
 
-- exit 0 = 通过；exit 2 = `problems` 非空，逐条修复后回到第 3 步（只改对应句子）
-  再跑 collect + verify。
-- 检查项：直通块字节级原样在位、可译块原文在位、每句占位符对账。
+- Exit 0 = pass. Exit 2 = `problems` is not empty: fix each item, go
+  back to step 3 (only the affected sentences), then collect + verify
+  again.
+- Checks: passthrough blocks byte-for-byte, translatable originals in
+  place, placeholder match per sentence.
 
-## 调试
+## Debugging
 
-- `chunk <input.md>`：只切块不落盘，用于快速看块结构。
-- 中断续跑：直接重跑同一步骤，已落盘的部分自动复用。
-- 全部重来：删除 `artifacts/` 目录。
+- `chunk <input.md>`: chunk only, nothing saved — quick look at block
+  structure.
+- After an interrupt: just re-run the same step. Saved parts are reused.
+- Start over: delete the `artifacts/` directory.
