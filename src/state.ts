@@ -14,10 +14,8 @@ import type { DoubaoResult } from "./doubao.js";
  */
 export interface BlockState {
   sentences?: Sentence[];
-  /** 句子 id → 豆包参考（translation + explanation） */
+  /** 句子 id → 豆包参考（translation + explanation）。终稿译文不入 state，只存 translations.json */
   refs?: Record<number, DoubaoResult>;
-  /** 句子 id → agent 定稿译文（restore 后的原文文本） */
-  translations?: Record<number, string>;
 }
 
 export interface GlobalState {
@@ -30,6 +28,11 @@ const STATE_DIR = "artifacts";
 export class State {
   readonly dir: string;
   private global: GlobalState;
+
+  /** 全局状态只读快照（块 code → 拆句/参考/译文） */
+  get all(): GlobalState {
+    return this.global;
+  }
 
   constructor(cwd: string) {
     this.dir = resolve(cwd, STATE_DIR);
@@ -62,12 +65,6 @@ export class State {
   /** 记录豆包参考（doubao 步骤）；每句落盘，中断后不重取 */
   recordRefs(code: string, refs: Record<number, DoubaoResult>) {
     this.global.blocks[code] = { ...this.global.blocks[code], refs };
-    this.flushGlobal();
-  }
-
-  /** 记录 agent 定稿译文（collect 步骤） */
-  recordTranslations(code: string, translations: Record<number, string>) {
-    this.global.blocks[code] = { ...this.global.blocks[code], translations };
     this.flushGlobal();
   }
 

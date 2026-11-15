@@ -15,6 +15,10 @@ fix verification problems. You do NOT write or edit the output file.
   if one sentence is missing. No skipped, merged, or added sentences.
 - **Keep placeholders ⟦n⟧ as-is** at the right spot in the translation.
   Do not translate them, do not add or drop them.
+- **Keep `terms.json` words in English** at every place they appear (see
+  step 2); match the exact source word form.
+- **Never reuse translations from a previous run** as final output; see
+  step 4.
 - All subcommands: stdout is JSON (for you to parse), stderr is human
   logs.
 - Exit codes: 0 = success; 1 = usage/input error; 2 = verify found
@@ -51,29 +55,80 @@ npx tsx src/cli.ts split input.md
 - The result is saved to `artifacts/state.json`; later steps refer to
   blocks by `code`.
 
-### 2. doubao — fetch references per block (expensive, saved per sentence)
+### 2. terms — agree on keep-in-English words (fast, before doubao)
+
+**This step has a hard STOP: you must wait for the user's reply before
+going further.** It cannot be skipped or batched with later steps.
+
+1. Read the source article and propose words/phrases that should stay
+   in English (product names, agent jargon like `subagent`,
+   `context window`, `skill`). Merge in any words already present in an
+   existing `terms.json` from earlier translations.
+2. Post the proposed list to the user and **end your turn.** The user
+   decides what goes in — this is a user decision, not yours.
+3. Only after the user confirms: write the final list to `terms.json`
+   (JSON string array) and validate it.
+4. If the user says to skip terms — and only then — proceed without a
+   list and say so in your final report.
+
+Validation command:
 
 ```bash
-npx tsx src/cli.ts doubao input.md 002
+npx tsx src/cli.ts terms input.md terms.json
 ```
 
 ```json
-{ "code": "002", "cached": false,
-  "refs": { "1": { "translation": "你好，世界。", "explanation": "……markdown notes" },
-            "2": { "translation": "…", "explanation": "…" } } }
+{ "ok": true, "file": "/path/terms.json", "count": 2,
+  "hits": { "subagent": 18, "subagents": 26 }, "missing": [] }
 ```
 
-- Serial /translate + /explain calls. Each sentence is written to disk
-  as soon as it arrives; a re-run only fetches missing sentences.
-- If everything was already fetched, returns `cached: true` with no
-  network calls.
-- Service down / a sentence failed for good → exit 1. Fetched sentences
-  are not lost.
+- `missing` = words in the list that never appear in the source
+  (usually a typo) — fix them before continuing.
+- Matching is word-shape aware: plurals and common suffixes count as a
+  hit, but the final translation must keep the exact original spelling.
+- `terms.json` is maintained across articles. Reuse it next time, and
+  add new confirmed words to it — the list gets better with every
+  translation. Only the user adds/removes entries; never invent terms
+  the user has not confirmed.
+- During arbitration, keep every listed word untranslated at each place
+  it appears in that sentence.
 
-### 3. Arbitrate — merge the final translations
+### 3. doubao — fetch references (one command, resumable)
+
+```bash
+npx tsx src/cli.ts doubao input.md          # all translatable blocks, serial
+npx tsx src/cli.ts doubao input.md 042 044  # subset, if you need one
+```
+
+```json
+{ "ok": true, "blocks": 63, "requested": ["000", "002", "004", "…"] }
+```
+
+- One command runs all blocks serially; per-sentence progress goes to
+  stderr, and every fetched sentence is flushed to disk immediately.
+- A re-run skips cached sentences and finished blocks. If a block fails,
+  the command lists the failed codes on stderr and exits 1; already
+  fetched sentences are kept — just re-run the same command.
+- Do not wrap this in shell `for` loops; the resume logic is inside.
+- Refs per sentence land in `artifacts/state.json` under
+  `blocks.<code>.refs` (raw `translation` + full `explanation`).
+
+### 4. Arbitrate — merge the final translations (in small batches)
 
 For each block you get three inputs: the source sentence, the Doubao
-translation (raw, word-by-word), and the Doubao explanation (full notes).
+translation (raw, word-by-word), and the Doubao explanation (full
+notes). **Arbitrate in batches of ~5 blocks.** Read the refs for those
+blocks from `artifacts/state.json`, decide the final text for every
+sentence in the batch, append to `translations.json`, then move to the
+next batch. Do NOT write 100+ sentences in one sitting — attention
+dilutes and quality drops.
+
+**Never copy old translations forward.** If `translations.json` already
+holds translations from a previous run (note: `artifacts/state.json`
+only ever caches Doubao refs, never final translations), do NOT reuse
+them as final output. Every sentence must be re-arbitrated
+against the source and the Doubao refs in this run; existing entries
+are at best a draft to review, not an answer.
 
 How to use the two Doubao results:
 
@@ -81,6 +136,10 @@ How to use the two Doubao results:
   polished translation (look for a "翻译" / "译文" section). That one is
   usually the best base: Doubao refined it against the context, so it
   beats the raw translation.
+- **No 译文 section? Still mine it.** The word notes and sense
+  disambiguation ("X 这里不是 A，而是 B") are exactly the traps to avoid;
+  use them to fix word choices and phrasing even when no ready
+  translation is offered.
 - **Compare the two candidates.** If the explanation's translation and
   the raw translation agree, merge them into the final text directly.
   If they conflict, use the explanation to decide which one is closer
@@ -95,7 +154,8 @@ How to use the two Doubao results:
 - **One sentence in, one sentence out.** Do not move content between
   sentences, do not merge or split ids.
 
-Write a JSON file (e.g. `translations.json`):
+Write a JSON file (e.g. `translations.json`) — start from an empty file
+on a new translation run:
 
 ```json
 { "002": { "1": "你好，世界。", "2": "这是一个测试。" },
@@ -105,7 +165,7 @@ Write a JSON file (e.g. `translations.json`):
 Outer keys are block `code` strings; inner keys are sentence ids as
 strings.
 
-### 4. collect — assemble the bilingual file
+### 5. collect — assemble the bilingual file
 
 ```bash
 npx tsx src/cli.ts collect input.md translations.json
@@ -120,10 +180,11 @@ npx tsx src/cli.ts collect input.md translations.json
 - ⟦n⟧ placeholders in your translations are restored to the original
   content by code. You just keep them in place, per the standard.
 
-### 5. verify — completeness check
+### 6. verify — completeness check
 
 ```bash
 npx tsx src/cli.ts verify input.md
+npx tsx src/cli.ts verify input.md output.md my-translations.json   # non-default names
 ```
 
 ```json
@@ -131,7 +192,7 @@ npx tsx src/cli.ts verify input.md
 ```
 
 - Exit 0 = pass. Exit 2 = `problems` is not empty: fix each item, go
-  back to step 3 (only the affected sentences), then collect + verify
+  back to step 4 (only the affected sentences), then collect + verify
   again.
 - Checks: passthrough blocks byte-for-byte, translatable originals in
   place, placeholder match per sentence.

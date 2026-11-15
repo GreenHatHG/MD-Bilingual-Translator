@@ -3,3 +3,5 @@ node_modules
 .tmp
 .vscode
 artifacts/
+pending-translation
+translations.json
