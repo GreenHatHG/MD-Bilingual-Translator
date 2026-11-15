@@ -3,7 +3,8 @@
  * Human-readable logs go to stderr. Doubao unavailable → hard error exit (no fallback).
  *
  *   chunk   <input.md>                        chunk only, output block list
- *   split   <input.md>                        chunk + sentence split, persisted (deletes stale translations.json)
+ *   split   <input.md> [--full]                  chunk + sentence split, persisted (deletes stale translations.json);
+ *                                                stdout is a compact summary unless --full
  *   doubao  <input.md> [<codes>|-a]           fetch Doubao refs; -a/omitted = all translatable blocks
  *   terms   <input.md> <terms.json>           validate the user-confirmed keep-in-English list
  *   arbitrate next <input.md> [--batch N]      print next batch to arbitrate (source + refs + ack fingerprints); CLI picks the batch
@@ -86,17 +87,18 @@ if (cmd === "split") {
   // New article run: clear last run's finals so stale translations can never be reused.
   // Deleted automatically — the agent never manages this file's lifecycle.
   if (existsSync(TRANSLATIONS_PATH)) unlinkSync(TRANSLATIONS_PATH);
-  const blocks: Array<{ code: string; kind: string; sentenceCount: number; sentences: Array<{ id: number; text: string }> }> = [];
+  const blocks: Array<{ code: string; kind: string; sentenceCount: number; sentences?: Array<{ id: number; text: string }> }> = [];
+  const full = process.argv.slice(3).includes("--full");
   for (const c of chunks) {
     if (c.kind === "passthrough") continue;
     const { sentences } = splitBlockIntoSentences(c.raw);
     state.recordSentences(c.code, sentences);
-    blocks.push({ code: c.code, kind: c.kind, sentenceCount: sentences.length, sentences });
+    blocks.push(full ? { code: c.code, kind: c.kind, sentenceCount: sentences.length, sentences } : { code: c.code, kind: c.kind, sentenceCount: sentences.length });
   }
   out({
     inputFile: basename(path),
     blocks,
-    note: "code without suffix = translatable; p = passthrough (do not translate); b = blank lines (ignore). Sentence ids start at 1 and are continuous. Saved to artifacts/state.json; later steps refer to blocks by code. Next: terms",
+    note: "Sentences saved to artifacts/state.json; stdout omits them unless --full. code without suffix = translatable; p = passthrough (do not translate); b = blank lines (ignore). Sentence ids start at 1 and are continuous. Later steps refer to blocks by code. Next: terms",
   });
   process.exit(0);
 }

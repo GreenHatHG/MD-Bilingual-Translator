@@ -36,6 +36,9 @@ One Doubao call can take minutes; client timeout defaults to 10 minutes
 npx tsx src/cli.ts split input.md
 ```
 
+Stdout is a compact block summary (codes + sentence counts); add `--full`
+to include the sentences themselves.
+
 ### 2. terms — agree on keep-in-English words (fast, before doubao)
 
 **This step has a hard STOP: you must wait for the user's reply before
