@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import type { Sentence } from "./sentence.js";
 import type { DoubaoResult } from "./doubao.js";
 
-/** 回显指纹长度（sha256 前 8 位） */
+/** Echo fingerprint length (first 8 hex of sha256 of the Doubao raw translation) */
 export const ACK_LEN = 8;
 
 export function ackOf(text: string): string {
@@ -45,7 +45,7 @@ export function validateBlock(input: BlockCheck): Array<{ sentenceId: number; re
   if (want.join() !== got.join()) {
     problems.push({
       sentenceId: 0,
-      reason: `句子 id 不匹配: 应为 [${want.join(", ")}] 实得 [${got.join(", ")}]（一次一个块，勿增删合并句子）`,
+      reason: `Sentence ids mismatch: expected [${want.join(", ")}] got [${got.join(", ")}] (one sentence in, one sentence out — never add, drop, or merge)`,
     });
     return problems;
   }
@@ -53,30 +53,30 @@ export function validateBlock(input: BlockCheck): Array<{ sentenceId: number; re
   for (const s of input.sentences) {
     const sub = given[String(s.id)];
     if (!sub?.text?.trim()) {
-      problems.push({ sentenceId: s.id, reason: "译文为空" });
+      problems.push({ sentenceId: s.id, reason: "Empty translation" });
       continue;
     }
     // ack 必须与该句豆包参考的指纹一致 —— 没读参考就给不出 ack
     const ref = input.refs[s.id];
     if (!ref) {
-      problems.push({ sentenceId: s.id, reason: "该句无豆包参考，先跑 doubao" });
+      problems.push({ sentenceId: s.id, reason: "No Doubao ref for this sentence; run doubao first" });
       continue;
     }
     if (sub.ack !== ackOf(ref.translation)) {
-      problems.push({ sentenceId: s.id, reason: `ack 不匹配（${sub.ack || "空"}）—— 先读 artifacts/state.json blocks.${input.code}.refs.${s.id} 再定稿` });
+      problems.push({ sentenceId: s.id, reason: `ack mismatch (${sub.ack || "empty"}) — read artifacts/state.json blocks.${input.code}.refs.${s.id} first, then finalize` });
     }
     // terms 命中必须原样保留
     for (const hit of input.termHits[s.id] ?? []) {
       const re = new RegExp(`(?<![\\w-])${hit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`, "i");
       if (!re.test(sub.text)) {
-        problems.push({ sentenceId: s.id, reason: `terms 词未保留英文: ${hit}` });
+        problems.push({ sentenceId: s.id, reason: `terms.json word not kept in English: ${hit}` });
       }
     }
     // 占位符对账
     const srcPh = (s.text.match(/⟦\d+⟧/g) ?? []).sort().join();
     const dstPh = (sub.text.match(/⟦\d+⟧/g) ?? []).sort().join();
     if (srcPh !== dstPh) {
-      problems.push({ sentenceId: s.id, reason: `占位符不匹配: 原 ${srcPh || "无"} 译 ${dstPh || "无"}` });
+      problems.push({ sentenceId: s.id, reason: `Placeholder mismatch: source ${srcPh || "none"} translation ${dstPh || "none"}` });
     }
   }
   return problems;

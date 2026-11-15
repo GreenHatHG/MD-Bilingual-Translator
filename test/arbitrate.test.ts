@@ -30,7 +30,7 @@ test("wrong ack is rejected", () => {
     submitted: { "1": { text: "你好 ⟦0⟧ 世界。", ack: "deadbeef" }, "2": { text: "x", ack: ackOf(ref.translation) } },
   });
   assert.equal(problems.length, 1);
-  assert.match(problems[0]!.reason, /ack 不匹配/);
+  assert.match(problems[0]!.reason, /ack mismatch/);
 });
 
 test("missing or extra sentence ids are rejected", () => {
@@ -39,7 +39,7 @@ test("missing or extra sentence ids are rejected", () => {
     submitted: { "1": { text: "你好 ⟦0⟧ 世界。", ack: ackOf(ref.translation) }, "3": { text: "多出来的", ack: ackOf(ref.translation) } },
   });
   assert.equal(problems.length, 1);
-  assert.match(problems[0]!.reason, /句子 id 不匹配/);
+  assert.match(problems[0]!.reason, /Sentence ids mismatch/);
 });
 
 test("placeholder mismatch is rejected", () => {
@@ -48,7 +48,7 @@ test("placeholder mismatch is rejected", () => {
     submitted: { "1": { text: "把占位符写丢了", ack: ackOf(ref.translation) }, "2": { text: "x", ack: ackOf(ref.translation) } },
   });
   assert.equal(problems.length, 1);
-  assert.match(problems[0]!.reason, /占位符不匹配/);
+  assert.match(problems[0]!.reason, /Placeholder mismatch/);
 });
 
 test("term word dropped from translation is rejected", () => {
@@ -58,7 +58,7 @@ test("term word dropped from translation is rejected", () => {
     submitted: { "1": { text: "你好 ⟦0⟧ 世界。", ack: ackOf(ref.translation) }, "2": { text: "这里使用子代理。", ack: ackOf(ref.translation) } },
   });
   assert.equal(problems.length, 1);
-  assert.match(problems[0]!.reason, /terms 词未保留/);
+  assert.match(problems[0]!.reason, /terms.json word not kept/);
 });
 
 test("blockDone requires every sentence non-empty", () => {

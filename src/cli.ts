@@ -36,9 +36,9 @@ function die(msg: string): never {
 }
 
 function readInput(inputArg: string | undefined): { path: string; source: string } {
-  if (!inputArg) die("缺少 <input.md> 参数");
+  if (!inputArg) die("Missing <input.md> argument");
   const path = resolve(cwd, inputArg);
-  if (!existsSync(path)) die(`输入文件不存在: ${path}`);
+  if (!existsSync(path)) die(`Input file not found: ${path}`);
   return { path, source: readFileSync(path, "utf8") };
 }
 
@@ -96,7 +96,7 @@ if (cmd === "split") {
   out({
     inputFile: basename(path),
     blocks,
-    note: "code 无后缀 = 可译；p = 直通不译；b = 空行忽略。句子 id 从 1 连续。已存 artifacts/state.json；后续步骤按 code 引用块。下一步: terms",
+    note: "code without suffix = translatable; p = passthrough (do not translate); b = blank lines (ignore). Sentence ids start at 1 and are continuous. Saved to artifacts/state.json; later steps refer to blocks by code. Next: terms",
   });
   process.exit(0);
 }
@@ -110,25 +110,25 @@ if (cmd === "doubao") {
   let codes: string[];
   if (rest.length === 0 || rest[0] === "-a") {
     codes = allCodes;
-    if (codes.length === 0) die("无拆句记录，先跑 split");
+    if (codes.length === 0) die("No sentence records; run split first");
   } else {
     codes = rest;
   }
   const config = loadConfig(cwd);
   const doubao = createDoubao(config);
   if (!(await doubao.health())) {
-    die(`豆包服务不可用（${config.doubaoBaseUrl}）。前置：./start_doubao.sh 后 node lib/doubao_server.js`);
+    die(`Doubao service unavailable (${config.doubaoBaseUrl}). Prerequisite: ./start_doubao.sh then node lib/doubao_server.js`);
   }
   const state = new State(cwd);
   const failed: string[] = [];
   for (const code of codes) {
     const block = state.getBlock(code);
     if (!block?.sentences?.length) {
-      console.error(`跳过 ${code}: 无拆句记录（先跑 split）`);
+      console.error(`Skipping ${code}: no sentence records (run split first)`);
       continue;
     }
     if (block.refs && Object.keys(block.refs).length === block.sentences.length) {
-      console.error(`[${code}] 已缓存，跳过`);
+      console.error(`[${code}] cached, skipping`);
       continue;
     }
     const refs: BlockState["refs"] = block.refs ?? {};
@@ -148,8 +148,8 @@ if (cmd === "doubao") {
       state.recordRefs(code, refs); // 每句落盘，中断不重取
     }
   }
-  if (failed.length > 0) die(`豆包失败块: ${failed.join(", ")}。已取回的句子已落盘，重跑只补缺。`);
-  out({ ok: true, blocks: codes.length, requested: codes, note: "下一步: arbitrate next" });
+  if (failed.length > 0) die(`Doubao failed for blocks: ${failed.join(", ")}. Fetched sentences are already persisted; re-run to retry only the missing ones.`);
+  out({ ok: true, blocks: codes.length, requested: codes, note: "Next: arbitrate next" });
   process.exit(0);
 }
 
@@ -157,7 +157,7 @@ if (cmd === "doubao") {
 if (cmd === "terms") {
   const { source } = readInput(process.argv[3]);
   const fileArg = process.argv[4];
-  if (!fileArg) die("缺少 <terms.json> 参数（字符串数组）");
+  if (!fileArg) die("Missing <terms.json> argument (JSON string array)");
   const terms = createTerms(resolve(cwd, fileArg));
   const list = terms.load().filter((t) => t.trim());
   const { hits, missing } = terms.check(list, source);
@@ -168,8 +168,8 @@ if (cmd === "terms") {
     hits,
     missing,
     note: missing.length > 0
-      ? "missing 非空 = 词单里有文章没有的词（多为拼写错），修正后再继续"
-      : "missing 为空即通过。下一步: doubao",
+      ? "missing = words in the list that never appear in the source (usually a typo) — fix terms.json first"
+      : "missing is empty = pass. Next: doubao",
   });
   process.exit(0);
 }
@@ -193,7 +193,7 @@ if (cmd === "arbitrate") {
         ? (JSON.parse(readFileSync(TRANSLATIONS_PATH, "utf8")) as Record<string, Record<string, string>>)
         : {};
     } catch (err) {
-      die(`translations.json 不是合法 JSON（应由 arbitrate submit 维护）: ${err instanceof Error ? err.message : err}`);
+      die(`translations.json is not valid JSON (it is maintained by arbitrate submit): ${err instanceof Error ? err.message : err}`);
     }
     const translations = translations0!;
     const termsList = createTerms(resolve(cwd, "terms.json")).load().filter((t) => t.trim());
@@ -207,7 +207,7 @@ if (cmd === "arbitrate") {
       if (!block?.sentences?.length) continue;
       if (blockDone(translations, c.code, block.sentences)) continue;
       const missingRef = block.sentences.find((s) => !block.refs?.[s.id]);
-      if (missingRef) die(`块 ${c.code} 句 ${missingRef.id} 缺豆包参考，先跑 doubao ${c.code}`);
+      if (missingRef) die(`Block ${c.code} sentence ${missingRef.id} has no Doubao ref; run doubao ${c.code} first`);
       picked.push(c.code);
       payload.push({
         code: c.code,
@@ -222,7 +222,7 @@ if (cmd === "arbitrate") {
       });
     }
     if (picked.length === 0) {
-      out({ ok: true, done: true, message: "所有块均已定稿，运行 collect" });
+      out({ ok: true, done: true, message: "All blocks finalized. Next: collect" });
       process.exit(0);
     }
     out({
@@ -237,12 +237,12 @@ if (cmd === "arbitrate") {
 
   if (sub === "submit") {
     const fileArg = process.argv[4];
-    if (!fileArg) die("缺少 <payload.json> 参数");
+    if (!fileArg) die("Missing <payload.json> argument");
     let submission: Submission;
     try {
       submission = JSON.parse(readFileSync(resolve(cwd, fileArg), "utf8"));
     } catch (err) {
-      die(`载荷不是合法 JSON: ${err instanceof Error ? err.message : err}`);
+      die(`Payload is not valid JSON: ${err instanceof Error ? err.message : err}`);
     }
     const { path } = readInputState();
     const state = new State(cwd);
@@ -252,7 +252,7 @@ if (cmd === "arbitrate") {
         ? (JSON.parse(readFileSync(TRANSLATIONS_PATH, "utf8")) as Record<string, Record<string, string>>)
         : {};
     } catch (err) {
-      die(`translations.json 不是合法 JSON（应由 arbitrate submit 维护）: ${err instanceof Error ? err.message : err}`);
+      die(`translations.json is not valid JSON (it is maintained by arbitrate submit): ${err instanceof Error ? err.message : err}`);
     }
     const termsList = createTerms(resolve(cwd, "terms.json")).load().filter((t) => t.trim());
     const chunks = chunksOf(path).filter((c) => c.kind !== "passthrough");
@@ -262,7 +262,7 @@ if (cmd === "arbitrate") {
     for (const [code, sentMap] of Object.entries(submission)) {
       const block = state.getBlock(code);
       if (!block?.sentences?.length) {
-        allProblems.push({ code, sentenceId: 0, reason: "未知块 code（先 split；勿自造块号）" });
+        allProblems.push({ code, sentenceId: 0, reason: "Unknown block code (run split first; never invent codes)" });
         continue;
       }
       const termHits: Record<number, string[]> = {};
@@ -274,7 +274,7 @@ if (cmd === "arbitrate") {
       const problems = validateBlock({ code, sentences: block.sentences, refs: block.refs ?? {}, termHits, submitted: sentMap });
       for (const p of problems) allProblems.push({ code, ...p });
     }
-    if (Object.keys(submission).length === 0) allProblems.push({ code: "", sentenceId: 0, reason: "载荷为空" });
+    if (Object.keys(submission).length === 0) allProblems.push({ code: "", sentenceId: 0, reason: "Empty payload" });
     if (allProblems.length > 0) {
       console.error(JSON.stringify({ ok: false, problems: allProblems }, null, 2));
       process.exit(2);
@@ -298,7 +298,7 @@ if (cmd === "arbitrate") {
 if (cmd === "collect") {
   const { path } = readInput(process.argv[3]);
   const translationsArg = process.argv[4];
-  if (!translationsArg) die("缺少 <translations.json> 参数（{blockCode: {sentenceId: 译文}}）");
+  if (!translationsArg) die("Missing <translations.json> argument ({blockCode: {sentenceId: translation}})");
   const given = JSON.parse(readFileSync(resolve(cwd, translationsArg), "utf8")) as Record<string, Record<string, string>>;
   const state = new State(cwd);
   const chunks = chunksOf(path);
@@ -307,14 +307,14 @@ if (cmd === "collect") {
   for (const c of chunks) {
     if (c.kind === "passthrough") continue;
     const block = state.getBlock(c.code);
-    if (!block?.sentences?.length) die(`块 ${c.code} 无拆句记录，先跑 split`);
+    if (!block?.sentences?.length) die(`Block ${c.code} has no sentence records; run split first`);
     const t = given[c.code] ?? {};
     for (const s of block.sentences) {
       if (!t[String(s.id)]?.trim()) missing.push({ code: c.code, sentenceId: s.id });
     }
   }
   if (missing.length > 0) {
-    die(`缺译文 ${missing.length} 句: ${JSON.stringify(missing)}`);
+    die(`Missing translations for ${missing.length} sentences: ${JSON.stringify(missing)}`);
   }
 
   // 拼装：原文区永远由代码从源文件拼装，译文块追加在原块之后。
@@ -352,7 +352,7 @@ if (cmd === "verify") {
     ? basename(resolve(cwd, outputArg))
     : basename(path).replace(/\.md$/i, "") + ".bilingual.md";
   const outputPath = resolve(dirname(path), outputName);
-  if (!existsSync(outputPath)) die(`输出文件不存在: ${outputPath}`);
+  if (!existsSync(outputPath)) die(`Output file not found: ${outputPath}`);
 
   const output = readFileSync(outputPath, "utf8");
   const chunks = chunksOf(path);
@@ -360,12 +360,12 @@ if (cmd === "verify") {
   // 译文从 translations.json 核对（state 不存终稿）
   const trFile = process.argv[5] ?? "translations.json";
   const trPath = resolve(cwd, trFile);
-  if (!existsSync(trPath)) die(`译文文件不存在: ${trPath}`);
+  if (!existsSync(trPath)) die(`Translations file not found: ${trPath}`);
   let outputTranslations: Record<string, Record<string, string>>;
   try {
     outputTranslations = JSON.parse(readFileSync(trPath, "utf8"));
   } catch (err) {
-    die(`译文文件不是合法 JSON: ${trPath} — ${err instanceof Error ? err.message : err}`);
+    die(`Translations file is not valid JSON: ${trPath} — ${err instanceof Error ? err.message : err}`);
   }
   const problems: string[] = [];
 
