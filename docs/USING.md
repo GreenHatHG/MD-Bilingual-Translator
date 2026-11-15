@@ -5,24 +5,21 @@ fix verification problems. You do NOT write or edit the output file.
 
 ## Hard rules
 
+- **Never create or edit `translations.json` yourself.** Only
+  `arbitrate submit` writes it (the CLI validates and merges). You only
+  write per-batch payload files.
 - **Never create or edit `*.bilingual.md` yourself.** Only `collect`
   writes the output file.
 - **Doubao references are a hard prerequisite.** If the service is down,
   commands exit with an error. Do not fall back to translating alone —
   start the service (see below). If it still fails, report it honestly.
   Never invent references.
-- **Every sentence must be finalized.** `collect` rejects the whole batch
-  if one sentence is missing. No skipped, merged, or added sentences.
-- **Keep placeholders ⟦n⟧ as-is** at the right spot in the translation.
-  Do not translate them, do not add or drop them.
-- **Keep `terms.json` words in English** at every place they appear (see
-  step 2); match the exact source word form.
-- **Never reuse translations from a previous run** as final output; see
-  step 4.
+- **Every sentence must be finalized.** `arbitrate submit` and `collect`
+  both reject the batch if one sentence is missing, merged, or added.
 - All subcommands: stdout is JSON (for you to parse), stderr is human
   logs.
-- Exit codes: 0 = success; 1 = usage/input error; 2 = verify found
-  problems.
+- Exit codes: 0 = success; 1 = usage/input error; 2 = verify/submit
+  found problems.
 
 ## Prerequisite: Doubao service
 
@@ -113,24 +110,54 @@ npx tsx src/cli.ts doubao input.md 042 044  # subset, if you need one
 - Refs per sentence land in `artifacts/state.json` under
   `blocks.<code>.refs` (raw `translation` + full `explanation`).
 
-### 4. Arbitrate — merge the final translations (in small batches)
+### 4. arbitrate — the CLI drives, you translate one batch at a time
 
-For each block you get three inputs: the source sentence, the Doubao
-translation (raw, word-by-word), and the Doubao explanation (full
-notes). **Arbitrate in batches of ~5 blocks.** Read the refs for those
-blocks from `artifacts/state.json`, decide the final text for every
-sentence in the batch, append to `translations.json`, then move to the
-next batch. Do NOT write 100+ sentences in one sitting — attention
-dilutes and quality drops.
+You never write or edit `translations.json`. The CLI owns that file;
+you only submit payloads and it validates + merges. This is enforced by
+exit codes, not by trust.
 
-**Never copy old translations forward.** If `translations.json` already
-holds translations from a previous run (note: `artifacts/state.json`
-only ever caches Doubao refs, never final translations), do NOT reuse
-them as final output. Every sentence must be re-arbitrated
-against the source and the Doubao refs in this run; existing entries
-are at best a draft to review, not an answer.
+Loop until done:
 
-How to use the two Doubao results:
+```bash
+npx tsx src/cli.ts arbitrate next input.md [--batch N]
+```
+
+```json
+{ "ok": true, "batch": ["042", "044"], "remainingBlocks": 58,
+  "payload": [ { "code": "042", "sentences": [
+      { "id": 1, "text": "…source…", "ack": "8d7f85cc", "termHits": ["subagent"],
+        "refs": { "translation": "…raw…", "explanation": "…notes…" } } ] } ] }
+```
+
+- The CLI picks the batch (default 5 blocks, `--batch` capped at 10).
+  You do not choose blocks — ever. Translate only what's in `payload`.
+- `ack` is a fingerprint of that sentence's Doubao raw translation. You
+  must echo it back in your submission — which means you must actually
+  read the refs printed in the payload.
+- `termHits` lists the terms.json word forms hit in that sentence; each
+  must appear in your translation unchanged.
+
+Write a payload file for exactly the batch you received — one entry per
+sentence:
+
+```json
+{ "042": { "1": { "text": "单 agent loop 设计需要纪律性…", "ack": "8d7f85cc" } } }
+```
+
+```bash
+npx tsx src/cli.ts arbitrate submit <payload.json>
+```
+
+- Exit 0 = merged. Output tells you `blocksDone/blocksTotal` and what's
+  next (`arbitrate next` again, or `collect` when all done).
+- Exit 2 = rejected, with a per-sentence reason list. Fix exactly those
+  sentences and resubmit. Nothing is merged on rejection.
+- The CLI rejects: missing/extra/merged sentence ids, wrong or missing
+  `ack`, dropped terms.json words, mismatched ⟦n⟧ placeholders,
+  unknown block codes, empty payloads.
+
+How to use the two Doubao results (this is the judgment part the CLI
+cannot check):
 
 - **Read the explanation first.** It often contains Doubao's own
   polished translation (look for a "翻译" / "译文" section). That one is
@@ -152,18 +179,8 @@ How to use the two Doubao results:
   Faithfulness to the source beats any reference. If both candidates
   are wrong, drop them and translate yourself.
 - **One sentence in, one sentence out.** Do not move content between
-  sentences, do not merge or split ids.
-
-Write a JSON file (e.g. `translations.json`) — start from an empty file
-on a new translation run:
-
-```json
-{ "002": { "1": "你好，世界。", "2": "这是一个测试。" },
-  "004": { "1": "## 一个标题" } }
-```
-
-Outer keys are block `code` strings; inner keys are sentence ids as
-strings.
+  sentences, do not merge or split ids. (The CLI enforces this: ids
+  must match the split exactly.)
 
 ### 5. collect — assemble the bilingual file
 
@@ -176,7 +193,8 @@ npx tsx src/cli.ts collect input.md translations.json
 ```
 
 - Any missing sentence → exit 1 with a list `[{code, sentenceId}]`. No
-  file is written. Fill the gaps and re-run.
+  file is written. Run `arbitrate next` for the missing blocks and
+  resubmit.
 - ⟦n⟧ placeholders in your translations are restored to the original
   content by code. You just keep them in place, per the standard.
 

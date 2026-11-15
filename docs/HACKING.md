@@ -4,16 +4,21 @@ Read `README.md` first for the what & why. This file covers the code.
 
 ## Architecture
 
-Five CLI subcommands in `src/cli.ts`, one flow:
+Six CLI subcommands in `src/cli.ts`, one flow:
 
 ```
-split → (per block) doubao → agent arbitration → collect → verify
+split → terms → (per batch) arbitrate next/submit → collect → verify
 ```
 
 - `split` chunks the Markdown and splits sentences; both land in
   `artifacts/state.json`.
 - `doubao` fetches /translate + /explain per sentence, serial, saved to
   disk after every sentence (resume support).
+- `arbitrate next` picks the next un-arbitrated batch (CLI-chosen, cap
+  10) and prints source + refs + ack fingerprints; `arbitrate submit`
+  validates a payload (ids, ack, terms, placeholders) and is the only
+  writer of `translations.json` (`src/arbitrate.ts` holds the pure
+  validation logic).
 - `collect` takes the agent's translations JSON and assembles the
   bilingual file.
 - `verify` checks the output for completeness.
@@ -23,6 +28,8 @@ split → (per block) doubao → agent arbitration → collect → verify
 | File | Role |
 |---|---|
 | `src/cli.ts` | Subcommand dispatch, argument parsing, all I/O. Each subcommand block ends with `process.exit`. |
+| `src/arbitrate.ts` | `validateBlock`/`ackOf`/`blockDone`: pure per-batch arbitration checks (ids, ack, terms, placeholders). No I/O. |
+| `src/terms.ts` | `createTerms`: keep-in-English list, word-shape matching (`variants`/`pattern`). |
 | `src/markdown.ts` | `splitIntoChunks`: remark AST → ordered blocks. Only top-level nodes. |
 | `src/sentence.ts` | `splitBlockIntoSentences`: per-line ICU split, mask/restore of ⟦n⟧ placeholders. |
 | `src/doubao.ts` | `createDoubao`: serial HTTP client, retries with backoff, throws `DoubaoError` on final failure (no fallback). Also `health()`. |
