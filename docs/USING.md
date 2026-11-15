@@ -40,18 +40,6 @@ One Doubao call can take minutes; client timeout defaults to 10 minutes
 npx tsx src/cli.ts split input.md
 ```
 
-```json
-{ "inputFile": "x.md", "blocks": [ { "code": "002", "kind": "para",
-  "sentenceCount": 2, "sentences": [ { "id": 1, "text": "Hello world. " } ] } ] }
-```
-
-- `code` with no suffix = translatable; `p` suffix = passthrough (do not
-  translate); `b` = blank lines (ignore).
-- Sentence ids start at 1 and are continuous within a block. `text` is
-  the full source sentence, with masks already restored.
-- The result is saved to `artifacts/state.json`; later steps refer to
-  blocks by `code`.
-
 ### 2. terms — agree on keep-in-English words (fast, before doubao)
 
 **This step has a hard STOP: you must wait for the user's reply before
@@ -74,39 +62,6 @@ Validation command:
 npx tsx src/cli.ts terms input.md terms.json
 ```
 
-```json
-{ "ok": true, "file": "/path/terms.json", "count": 2,
-  "hits": { "subagent": 18, "subagents": 26 }, "missing": [] }
-```
-
-- `missing` = words in the list that never appear in the source
-  (usually a typo) — fix them before continuing.
-- Matching is word-shape aware: plurals and common suffixes count as a
-  hit, but the final translation must keep the exact original spelling.
-- `terms.json` is maintained across articles. Reuse it next time, and
-  add new confirmed words to it — the list gets better with every
-  translation. Only the user adds/removes entries; never invent terms
-  the user has not confirmed.
-- During arbitration, keep every listed word untranslated at each place
-  it appears in that sentence.
-
-### 3. doubao — fetch references (one command, resumable)
-
-```bash
-npx tsx src/cli.ts doubao input.md          # all translatable blocks, serial
-npx tsx src/cli.ts doubao input.md 042 044  # subset, if you need one
-```
-
-```json
-{ "ok": true, "blocks": 63, "requested": ["000", "002", "004", "…"] }
-```
-
-- One command runs all blocks serially; per-sentence progress goes to
-  stderr, and every fetched sentence is flushed to disk immediately.
-- A re-run skips cached sentences and finished blocks. If a block fails,
-  the command lists the failed codes on stderr and exits 1; already
-  fetched sentences are kept — just re-run the same command.
-- Do not wrap this in shell `for` loops; the resume logic is inside.
 - Refs per sentence land in `artifacts/state.json` under
   `blocks.<code>.refs` (raw `translation` + full `explanation`).
 
@@ -122,13 +77,6 @@ Loop until done:
 npx tsx src/cli.ts arbitrate next input.md [--batch N]
 ```
 
-```json
-{ "ok": true, "batch": ["042", "044"], "remainingBlocks": 58,
-  "payload": [ { "code": "042", "sentences": [
-      { "id": 1, "text": "…source…", "ack": "8d7f85cc", "termHits": ["subagent"],
-        "refs": { "translation": "…raw…", "explanation": "…notes…" } } ] } ] }
-```
-
 - The CLI picks the batch (default 5 blocks, `--batch` capped at 10).
   You do not choose blocks — ever. Translate only what's in `payload`.
 - `ack` is a fingerprint of that sentence's Doubao raw translation. You
@@ -136,6 +84,8 @@ npx tsx src/cli.ts arbitrate next input.md [--batch N]
   read the refs printed in the payload.
 - `termHits` lists the terms.json word forms hit in that sentence; each
   must appear in your translation unchanged.
+- The payload shape and the submit command arrive in the output's
+  `instructions` field.
 
 Write a payload file for exactly the batch you received — one entry per
 sentence:
@@ -148,11 +98,10 @@ sentence:
 npx tsx src/cli.ts arbitrate submit <payload.json>
 ```
 
-- Exit 0 = merged. Output tells you `blocksDone/blocksTotal` and what's
-  next (`arbitrate next` again, or `collect` when all done).
+- Exit 0 = merged; the output's `next` field says what to run.
 - Exit 2 = rejected, with a per-sentence reason list. Fix exactly those
   sentences and resubmit. Nothing is merged on rejection.
-- The CLI rejects: missing/extra/merged sentence ids, wrong or missing
+- Rejections cover: missing/extra/merged sentence ids, wrong or missing
   `ack`, dropped terms.json words, mismatched ⟦n⟧ placeholders,
   unknown block codes, empty payloads.
 
