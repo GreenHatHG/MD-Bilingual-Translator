@@ -1,13 +1,11 @@
 /**
- * CLI 入口：五个独立子命令，供 agent 逐步调用。所有输出为 JSON（stdout），
+ * CLI 入口：六个独立子命令，供 agent 逐步调用。所有输出为 JSON（stdout），
  * 人读日志走 stderr。豆包不可用 → 明确报错退出（不降级）。
  *
  *   chunk   <input.md>                        切块，输出块列表
  *   split   <input.md>                        切块 + 全部可译块拆句，落盘
  *   doubao  <input.md> [<codes>|-a]           取豆包参考。-a/缺省 = 全部可译块
  *   terms   <input.md> <terms.json>           校验用户确认的「原文保留词」清单
- *   arbitrate next <input.md> [--batch N]      打印下一批待定稿块（源句+豆包参考），CLI 决定批次
- *   arbitrate submit <payload.json>            校验一批译文并合入 translations.json（CLI 独占写入）
  *   arbitrate next <input.md> [--batch N]      打印下一批待定稿块（源句+豆包参考+回显指纹），CLI 决定批次
  *   arbitrate submit <payload.json>            校验一批译文并合入 translations.json（CLI 独占写入）
  *   collect <input.md> <translations.json>   收译文 → 原子拼装双语文件（translations.json 由 arbitrate 维护）
@@ -173,9 +171,15 @@ if (cmd === "arbitrate") {
 
     const chunks = chunksOf(path).filter((c) => c.kind !== "passthrough");
     const state = new State(cwd);
-    const translations = existsSync(TRANSLATIONS_PATH)
-      ? (JSON.parse(readFileSync(TRANSLATIONS_PATH, "utf8")) as Record<string, Record<string, string>>)
-      : {};
+    let translations0: Record<string, Record<string, string>>;
+    try {
+      translations0 = existsSync(TRANSLATIONS_PATH)
+        ? (JSON.parse(readFileSync(TRANSLATIONS_PATH, "utf8")) as Record<string, Record<string, string>>)
+        : {};
+    } catch (err) {
+      die(`translations.json 不是合法 JSON（应由 arbitrate submit 维护）: ${err instanceof Error ? err.message : err}`);
+    }
+    const translations = translations0!;
     const termsList = createTerms(resolve(cwd, "terms.json")).load().filter((t) => t.trim());
     const termRe = termsList.length > 0 ? patternOf(termsList) : null;
 
@@ -377,4 +381,4 @@ if (cmd === "verify") {
   process.exit(problems.length === 0 ? 0 : 2);
 }
 
-die(`未知命令: ${cmd}。可用: chunk | split | doubao | collect | verify`);
+die(`未知命令: ${cmd}。可用: chunk | split | doubao | terms | arbitrate next/submit | collect | verify`);
