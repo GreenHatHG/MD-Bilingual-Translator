@@ -70,9 +70,6 @@ npx tsx src/cli.ts doubao input.md          # all translatable blocks, serial
 npx tsx src/cli.ts doubao input.md 042 044  # subset, if you need one
 ```
 
-- Refs per sentence land in `artifacts/state.json` under
-  `blocks.<code>.refs` (raw `translation` + full `explanation`).
-
 ### 4. arbitrate — the CLI drives, you translate one batch at a time
 
 You never write or edit `translations.json`. The CLI owns that file;
