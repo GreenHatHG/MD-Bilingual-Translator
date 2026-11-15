@@ -209,7 +209,7 @@ if (cmd === "arbitrate") {
       ok: true,
       batch: picked,
       remainingBlocks: remainingCount(chunks, state, translations),
-      instructions: '对 batch 中每块每句产出 {text, ack}；ack 原样回显。载荷 {"<code>": {"<句id>": {"text": "…", "ack": "…"}}} 写入文件后运行 arbitrate submit <file>',
+      instructions: 'Echo each ack unchanged; keep termHits words untranslated; one sentence in, one sentence out. See USING.md step 4.',
       payload,
     });
     process.exit(0);

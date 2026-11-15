@@ -82,33 +82,23 @@ Loop until done:
 npx tsx src/cli.ts arbitrate next input.md [--batch N]
 ```
 
-- The CLI picks the batch (default 5 blocks, `--batch` capped at 10).
-  You do not choose blocks — ever. Translate only what's in `payload`.
-- `ack` is a fingerprint of that sentence's Doubao raw translation. You
-  must echo it back in your submission — which means you must actually
-  read the refs printed in the payload.
-- `termHits` lists the terms.json word forms hit in that sentence; each
-  must appear in your translation unchanged.
-- The payload shape and the submit command arrive in the output's
-  `instructions` field.
-
-Write a payload file for exactly the batch you received — one entry per
-sentence:
-
-```json
-{ "042": { "1": { "text": "单 agent loop 设计需要纪律性…", "ack": "8d7f85cc" } } }
-```
+- The CLI picks the batch (default 5 blocks, `--batch` capped at 10 —
+  quality degrades past that). You do not choose blocks — ever.
+  Translate only what's in `payload`.
+- For each sentence in the payload: translate `text`, echo `ack`
+  unchanged, and keep every `termHits` word form untranslated in
+  `text`. One sentence in, one sentence out — do not merge, split, or
+  move content between ids.
+- Write a payload file `{"<code>": {"<sentenceId>": {"text": "…",
+  "ack": "…"}}}` for exactly the batch you received, then run:
 
 ```bash
 npx tsx src/cli.ts arbitrate submit <payload.json>
 ```
 
 - Exit 0 = merged; the output's `next` field says what to run.
-- Exit 2 = rejected, with a per-sentence reason list. Fix exactly those
-  sentences and resubmit. Nothing is merged on rejection.
-- Rejections cover: missing/extra/merged sentence ids, wrong or missing
-  `ack`, dropped terms.json words, mismatched ⟦n⟧ placeholders,
-  unknown block codes, empty payloads.
+- Exit 2 = rejected with a per-sentence `problems` list; nothing is
+  merged. Fix exactly those sentences and resubmit.
 
 How to use the two Doubao results (this is the judgment part the CLI
 cannot check):
@@ -156,7 +146,6 @@ npx tsx src/cli.ts verify input.md
 - `chunk <input.md>`: chunk only, nothing saved — quick look at block
   structure.
 - After an interrupt: just re-run the same step. Saved parts are reused.
-- Start over: delete the `artifacts/` directory (and `translations.json`).
 
 ---
 
