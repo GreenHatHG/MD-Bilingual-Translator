@@ -15,7 +15,7 @@
  * （一条命令串行跑完，断点续跑）→ arbitrate next/submit 循环（CLI 选批、校验、
  * 独占写 translations.json）→ collect → verify，失败按报告修复后重跑 collect。
  */
-import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from "node:fs";
 import { resolve, dirname, basename } from "node:path";
 import { loadConfig } from "./env.js";
 import { splitIntoChunks, type Chunk } from "./markdown.js";
@@ -28,6 +28,7 @@ import { ackOf, validateBlock, blockDone, type Submission } from "./arbitrate.js
 
 const cwd = process.cwd();
 const cmd = process.argv[2];
+const TRANSLATIONS_PATH = resolve(cwd, "translations.json");
 
 function die(msg: string): never {
   console.error(msg);
@@ -82,6 +83,9 @@ if (cmd === "split") {
   const chunks = chunksOf(path);
   const state = new State(cwd);
   state.setInputFile(basename(path));
+  // 新文章开跑：清掉上一轮的定稿，杜绝旧译文被当成本轮结果复用。
+  // 程序自动删，agent 无需（也不应）手工管理这个文件的生命周期。
+  if (existsSync(TRANSLATIONS_PATH)) unlinkSync(TRANSLATIONS_PATH);
   const blocks: Array<{ code: string; kind: string; sentenceCount: number; sentences: Array<{ id: number; text: string }> }> = [];
   for (const c of chunks) {
     if (c.kind === "passthrough") continue;
@@ -160,7 +164,6 @@ if (cmd === "terms") {
 // ---------- arbitrate ----------
 if (cmd === "arbitrate") {
   const sub = process.argv[3];
-  const TRANSLATIONS_PATH = resolve(cwd, "translations.json");
 
   if (sub === "next") {
     const { path } = readInput(process.argv[4]);
