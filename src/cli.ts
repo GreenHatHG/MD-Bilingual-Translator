@@ -93,7 +93,11 @@ if (cmd === "split") {
     state.recordSentences(c.code, sentences);
     blocks.push({ code: c.code, kind: c.kind, sentenceCount: sentences.length, sentences });
   }
-  out({ inputFile: basename(path), blocks });
+  out({
+    inputFile: basename(path),
+    blocks,
+    note: "code 无后缀 = 可译；p = 直通不译；b = 空行忽略。句子 id 从 1 连续。已存 artifacts/state.json；后续步骤按 code 引用块。下一步: terms",
+  });
   process.exit(0);
 }
 
@@ -145,7 +149,7 @@ if (cmd === "doubao") {
     }
   }
   if (failed.length > 0) die(`豆包失败块: ${failed.join(", ")}。已取回的句子已落盘，重跑只补缺。`);
-  out({ ok: true, blocks: codes.length, requested: codes });
+  out({ ok: true, blocks: codes.length, requested: codes, note: "下一步: arbitrate next" });
   process.exit(0);
 }
 
@@ -157,7 +161,16 @@ if (cmd === "terms") {
   const terms = createTerms(resolve(cwd, fileArg));
   const list = terms.load().filter((t) => t.trim());
   const { hits, missing } = terms.check(list, source);
-  out({ ok: true, file: terms.file, count: list.length, hits, missing });
+  out({
+    ok: true,
+    file: terms.file,
+    count: list.length,
+    hits,
+    missing,
+    note: missing.length > 0
+      ? "missing 非空 = 词单里有文章没有的词（多为拼写错），修正后再继续"
+      : "missing 为空即通过。下一步: doubao",
+  });
   process.exit(0);
 }
 
