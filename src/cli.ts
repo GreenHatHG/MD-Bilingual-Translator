@@ -226,9 +226,14 @@ if (cmd === "arbitrate") {
     }
     const { path } = readInputState();
     const state = new State(cwd);
-    const translations = existsSync(TRANSLATIONS_PATH)
-      ? (JSON.parse(readFileSync(TRANSLATIONS_PATH, "utf8")) as Record<string, Record<string, string>>)
-      : {};
+    let translations: Record<string, Record<string, string>>;
+    try {
+      translations = existsSync(TRANSLATIONS_PATH)
+        ? (JSON.parse(readFileSync(TRANSLATIONS_PATH, "utf8")) as Record<string, Record<string, string>>)
+        : {};
+    } catch (err) {
+      die(`translations.json 不是合法 JSON（应由 arbitrate submit 维护）: ${err instanceof Error ? err.message : err}`);
+    }
     const termsList = createTerms(resolve(cwd, "terms.json")).load().filter((t) => t.trim());
     const chunks = chunksOf(path).filter((c) => c.kind !== "passthrough");
     const termRe = termsList.length > 0 ? patternOf(termsList) : null;
