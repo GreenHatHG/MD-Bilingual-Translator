@@ -1,19 +1,19 @@
 /**
- * CLI 入口：六个独立子命令，供 agent 逐步调用。所有输出为 JSON（stdout），
+ * CLI entry: six subcommands, called step by step by the agent. All stdout is JSON,
  * Human-readable logs go to stderr. Doubao unavailable → hard error exit (no fallback).
  *
- *   chunk   <input.md>                        切块，输出块列表
- *   split   <input.md>                        切块 + 全部可译块拆句，落盘
- *   doubao  <input.md> [<codes>|-a]           取豆包参考。-a/缺省 = 全部可译块
- *   terms   <input.md> <terms.json>           校验用户确认的「原文保留词」清单
- *   arbitrate next <input.md> [--batch N]      打印下一批待定稿块（源句+豆包参考+回显指纹），CLI 决定批次
- *   arbitrate submit <payload.json>            校验一批译文并合入 translations.json（CLI 独占写入）
- *   collect <input.md> <translations.json>   收译文 → 原子拼装双语文件（translations.json 由 arbitrate 维护）
- *   verify  <input.md> [output.md] [translations.json]  校验输出完整性，JSON 报告
+ *   chunk   <input.md>                        chunk only, output block list
+ *   split   <input.md>                        chunk + sentence split, persisted (deletes stale translations.json)
+ *   doubao  <input.md> [<codes>|-a]           fetch Doubao refs; -a/omitted = all translatable blocks
+ *   terms   <input.md> <terms.json>           validate the user-confirmed keep-in-English list
+ *   arbitrate next <input.md> [--batch N]      print next batch to arbitrate (source + refs + ack fingerprints); CLI picks the batch
+ *   arbitrate submit <payload.json>            validate one payload batch and merge into translations.json (CLI-exclusive writer)
+ *   collect <input.md> <translations.json>   assemble the bilingual file atomically (translations.json is maintained by arbitrate)
+ *   verify  <input.md> [output.md] [translations.json]  completeness check of the output, JSON report
  *
- * agent 工作流：split → terms（先出候选词单，用户确认后校验）→ doubao -a
- * （一条命令串行跑完，断点续跑）→ arbitrate next/submit 循环（CLI 选批、校验、
- * 独占写 translations.json）→ collect → verify，失败按报告修复后重跑 collect。
+ * Workflow: split → terms (propose list, user confirms) → doubao -a (serial, resumable)
+ * → arbitrate next/submit loop (CLI picks batches, validates, exclusively writes
+ * translations.json) → collect → verify; on failure fix per report and re-run collect.
  */
 import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from "node:fs";
 import { resolve, dirname, basename } from "node:path";
@@ -50,11 +50,11 @@ function chunksOf(inputPath: string): Chunk[] {
   return splitIntoChunks(readFileSync(inputPath, "utf8"));
 }
 
-/** terms 词形匹配（复数/后缀变体，长词优先）—— 与 terms 子命令同一套规则 */
+/** terms word-shape matching (plurals/suffix variants, longest first) — same rules as the terms subcommand */
 function patternOf(list: string[]): RegExp {
   return pattern(list);
 }
-/** 尚未定稿（有句子缺译文）的可译块数 */
+/** Count of translatable blocks not yet fully arbitrated (some sentences missing) */
 function remainingCount(chunks: Chunk[], state: State, translations: Record<string, Record<string, string>>): number {
   return chunks.filter((c) => {
     const b = state.getBlock(c.code);
@@ -62,11 +62,11 @@ function remainingCount(chunks: Chunk[], state: State, translations: Record<stri
   }).length;
 }
 
-/** submit 用：从 state.json 拿输入文件名（submit 不需要 agent 传 input） */
+/** submit uses this: reads the input filename from state.json (agent need not pass input) */
 function readInputState(): { path: string; source: string } {
   const state = new State(cwd);
   const name = state.all.inputFile;
-  if (!name) die("state.json 缺 inputFile，先跑 split");
+  if (!name) die("state.json has no inputFile; run split first");
   return readInput(name);
 }
 
@@ -83,8 +83,8 @@ if (cmd === "split") {
   const chunks = chunksOf(path);
   const state = new State(cwd);
   state.setInputFile(basename(path));
-  // 新文章开跑：清掉上一轮的定稿，杜绝旧译文被当成本轮结果复用。
-  // 程序自动删，agent 无需（也不应）手工管理这个文件的生命周期。
+  // New article run: clear last run's finals so stale translations can never be reused.
+  // Deleted automatically — the agent never manages this file's lifecycle.
   if (existsSync(TRANSLATIONS_PATH)) unlinkSync(TRANSLATIONS_PATH);
   const blocks: Array<{ code: string; kind: string; sentenceCount: number; sentences: Array<{ id: number; text: string }> }> = [];
   for (const c of chunks) {
@@ -133,19 +133,19 @@ if (cmd === "doubao") {
     }
     const refs: BlockState["refs"] = block.refs ?? {};
     for (const s of block.sentences) {
-      if (refs[s.id]) continue; // 已取过的句子直接复用
-      process.stderr.write(`[${code}] 句 ${s.id}/${block.sentences.length} ...`);
+      if (refs[s.id]) continue; // already fetched, reuse
+      process.stderr.write(`[${code}] sentence ${s.id}/${block.sentences.length} ...`);
       try {
         refs[s.id] = await doubao.reference(s.text);
       } catch (err) {
-        // 已取回的句子已逐句落盘，重跑只补缺的句子
+        // fetched sentences are already persisted; a re-run fetches only the missing ones
         process.stderr.write(" failed\n");
         console.error(String(err instanceof Error ? err.message : err));
         failed.push(code);
-        break; // 本块中断，继续下一块
+        break; // abort this block, move to the next
       }
       process.stderr.write(" done\n");
-      state.recordRefs(code, refs); // 每句落盘，中断不重取
+      state.recordRefs(code, refs); // persisted per sentence; interrupted runs never refetch
     }
   }
   if (failed.length > 0) die(`Doubao failed for blocks: ${failed.join(", ")}. Fetched sentences are already persisted; re-run to retry only the missing ones.`);
@@ -182,8 +182,8 @@ if (cmd === "arbitrate") {
     const { path } = readInput(process.argv[4]);
     const batchIdx = process.argv.indexOf("--batch");
     let batch = batchIdx > 0 ? Number(process.argv[batchIdx + 1]) : 5;
-    if (!Number.isInteger(batch) || batch < 1) die("--batch 需为正整数");
-    if (batch > 10) die("--batch 上限 10（批量过大注意力稀释，质量下降；见 USING.md 步骤 4）");
+    if (!Number.isInteger(batch) || batch < 1) die("--batch must be a positive integer");
+    if (batch > 10) die("--batch cap is 10 (quality degrades past that; see USING.md step 4)");
 
     const chunks = chunksOf(path).filter((c) => c.kind !== "passthrough");
     const state = new State(cwd);
@@ -279,7 +279,7 @@ if (cmd === "arbitrate") {
       console.error(JSON.stringify({ ok: false, problems: allProblems }, null, 2));
       process.exit(2);
     }
-    // 合入（CLI 独占写 translations.json）
+    // merge (CLI-exclusive writer of translations.json)
     for (const [code, sentMap] of Object.entries(submission)) {
       translations[code] = { ...translations[code] };
       for (const [id, sub2] of Object.entries(sentMap)) translations[code][id] = sub2.text;
@@ -291,7 +291,7 @@ if (cmd === "arbitrate") {
     process.exit(0);
   }
 
-  die("用法: arbitrate next <input.md> [--batch N] | arbitrate submit <payload.json>");
+  die("Usage: arbitrate next <input.md> [--batch N] | arbitrate submit <payload.json>");
 }
 
 // ---------- collect ----------
@@ -317,8 +317,9 @@ if (cmd === "collect") {
     die(`Missing translations for ${missing.length} sentences: ${JSON.stringify(missing)}`);
   }
 
-  // 拼装：原文区永远由代码从源文件拼装，译文块追加在原块之后。
-  // 译文不入 state —— 终稿只存在于 translations.json，避免被误读为「已完成」缓存。
+  // Assembly: the source side is always built by code from the source file; the
+  // translation block is appended after each source block. Finals live only in
+  // translations.json, never in state, so they can't be mistaken for a "done" cache.
   const outParts: string[] = [];
   for (const c of chunks) {
     if (c.kind === "passthrough") {
@@ -357,7 +358,7 @@ if (cmd === "verify") {
   const output = readFileSync(outputPath, "utf8");
   const chunks = chunksOf(path);
   const state = new State(cwd);
-  // 译文从 translations.json 核对（state 不存终稿）
+  // Translations are checked from translations.json (state never holds finals)
   const trFile = process.argv[5] ?? "translations.json";
   const trPath = resolve(cwd, trFile);
   if (!existsSync(trPath)) die(`Translations file not found: ${trPath}`);
@@ -369,27 +370,27 @@ if (cmd === "verify") {
   }
   const problems: string[] = [];
 
-  // 1. 直通块字节级原样出现在输出中
+  // 1. Passthrough blocks appear byte-for-byte in the output
   for (const c of chunks) {
     if (c.kind === "passthrough" && c.raw.trim() && !output.includes(c.raw)) {
-      problems.push(`直通块缺失或被改动: ${c.code}`);
+      problems.push(`Passthrough block missing or altered: ${c.code}`);
     }
   }
-  // 2. 每个可译块：原块 + 译文块都在输出中，句子数一致，占位符完整
+  // 2. Each translatable block: source + translation both present, sentence count matches, placeholders intact
   for (const c of chunks) {
     if (c.kind === "passthrough") continue;
-    if (!output.includes(c.raw)) problems.push(`原文块缺失: ${c.code}`);
+    if (!output.includes(c.raw)) problems.push(`Source block missing from output: ${c.code}`);
     const block = state.getBlock(c.code);
     if (!block?.sentences) continue;
     const { sentences } = splitBlockIntoSentences(c.raw);
     for (const s of sentences) {
       const t = (outputTranslations[c.code] ?? {})[String(s.id)];
-      if (!t) { problems.push(`${c.code} 句 ${s.id} 无译文`); continue; }
-      // 占位符对账：原文里的 ⟦n⟧ 必须出现在译文中
+      if (!t) { problems.push(`${c.code} sentence ${s.id}: no translation`); continue; }
+      // Placeholder reconciliation: every ⟦n⟧ in the source must appear in the translation
       const srcPh = (s.text.match(/⟦\d+⟧/g) ?? []).sort();
       const dstPh = (t.match(/⟦\d+⟧/g) ?? []).sort();
       if (srcPh.join() !== dstPh.join()) {
-        problems.push(`${c.code} 句 ${s.id} 占位符不匹配: 原 ${srcPh.join("")} 译 ${dstPh.join("")}`);
+        problems.push(`${c.code} sentence ${s.id} placeholder mismatch: source ${srcPh.join("")} translation ${dstPh.join("")}`);
       }
     }
   }
