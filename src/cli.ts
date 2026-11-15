@@ -1,6 +1,6 @@
 /**
  * CLI 入口：六个独立子命令，供 agent 逐步调用。所有输出为 JSON（stdout），
- * 人读日志走 stderr。豆包不可用 → 明确报错退出（不降级）。
+ * Human-readable logs go to stderr. Doubao unavailable → hard error exit (no fallback).
  *
  *   chunk   <input.md>                        切块，输出块列表
  *   split   <input.md>                        切块 + 全部可译块拆句，落盘
@@ -397,4 +397,4 @@ if (cmd === "verify") {
   process.exit(problems.length === 0 ? 0 : 2);
 }
 
-die(`未知命令: ${cmd}。可用: chunk | split | doubao | terms | arbitrate next/submit | collect | verify`);
+die(`Unknown command: ${cmd}. Available: chunk | split | doubao | terms | arbitrate next/submit | collect | verify`);
