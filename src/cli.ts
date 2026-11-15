@@ -6,12 +6,16 @@
  *   split   <input.md>                        切块 + 全部可译块拆句，落盘
  *   doubao  <input.md> [<codes>|-a]           取豆包参考。-a/缺省 = 全部可译块
  *   terms   <input.md> <terms.json>           校验用户确认的「原文保留词」清单
- *   collect <input.md> <translations.json>   收 agent 译文 → 原子拼装双语文件
+ *   arbitrate next <input.md> [--batch N]      打印下一批待定稿块（源句+豆包参考），CLI 决定批次
+ *   arbitrate submit <payload.json>            校验一批译文并合入 translations.json（CLI 独占写入）
+ *   arbitrate next <input.md> [--batch N]      打印下一批待定稿块（源句+豆包参考+回显指纹），CLI 决定批次
+ *   arbitrate submit <payload.json>            校验一批译文并合入 translations.json（CLI 独占写入）
+ *   collect <input.md> <translations.json>   收译文 → 原子拼装双语文件（translations.json 由 arbitrate 维护）
  *   verify  <input.md> [output.md] [translations.json]  校验输出完整性，JSON 报告
  *
  * agent 工作流：split → terms（先出候选词单，用户确认后校验）→ doubao -a
- * （一条命令串行跑完，断点续跑）→ agent 参考豆包+翻译标准（docs/USING.md）
- * 小批量定稿 → collect → verify，失败按报告修复后重跑 collect。
+ * （一条命令串行跑完，断点续跑）→ arbitrate next/submit 循环（CLI 选批、校验、
+ * 独占写 translations.json）→ collect → verify，失败按报告修复后重跑 collect。
  */
 import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { resolve, dirname, basename } from "node:path";
@@ -19,9 +23,10 @@ import { loadConfig } from "./env.js";
 import { splitIntoChunks, type Chunk } from "./markdown.js";
 import { splitBlockIntoSentences } from "./sentence.js";
 import { createDoubao } from "./doubao.js";
-import { createTerms } from "./terms.js";
+import { createTerms, pattern } from "./terms.js";
 import { State, type BlockState } from "./state.js";
 import { Terms } from "./terms.js";
+import { ackOf, validateBlock, blockDone, type Submission } from "./arbitrate.js";
 
 const cwd = process.cwd();
 const cmd = process.argv[2];
@@ -44,6 +49,26 @@ function out(value: unknown) {
 
 function chunksOf(inputPath: string): Chunk[] {
   return splitIntoChunks(readFileSync(inputPath, "utf8"));
+}
+
+/** terms 词形匹配（复数/后缀变体，长词优先）—— 与 terms 子命令同一套规则 */
+function patternOf(list: string[]): RegExp {
+  return pattern(list);
+}
+/** 尚未定稿（有句子缺译文）的可译块数 */
+function remainingCount(chunks: Chunk[], state: State, translations: Record<string, Record<string, string>>): number {
+  return chunks.filter((c) => {
+    const b = state.getBlock(c.code);
+    return b?.sentences?.length && !blockDone(translations, c.code, b.sentences);
+  }).length;
+}
+
+/** submit 用：从 state.json 拿输入文件名（submit 不需要 agent 传 input） */
+function readInputState(): { path: string; source: string } {
+  const state = new State(cwd);
+  const name = state.all.inputFile;
+  if (!name) die("state.json 缺 inputFile，先跑 split");
+  return readInput(name);
 }
 
 // ---------- chunk ----------
@@ -132,6 +157,116 @@ if (cmd === "terms") {
   const { hits, missing } = terms.check(list, source);
   out({ ok: true, file: terms.file, count: list.length, hits, missing });
   process.exit(0);
+}
+
+// ---------- arbitrate ----------
+if (cmd === "arbitrate") {
+  const sub = process.argv[3];
+  const TRANSLATIONS_PATH = resolve(cwd, "translations.json");
+
+  if (sub === "next") {
+    const { path } = readInput(process.argv[4]);
+    const batchIdx = process.argv.indexOf("--batch");
+    let batch = batchIdx > 0 ? Number(process.argv[batchIdx + 1]) : 5;
+    if (!Number.isInteger(batch) || batch < 1) die("--batch 需为正整数");
+    if (batch > 10) die("--batch 上限 10（批量过大注意力稀释，质量下降；见 USING.md 步骤 4）");
+
+    const chunks = chunksOf(path).filter((c) => c.kind !== "passthrough");
+    const state = new State(cwd);
+    const translations = existsSync(TRANSLATIONS_PATH)
+      ? (JSON.parse(readFileSync(TRANSLATIONS_PATH, "utf8")) as Record<string, Record<string, string>>)
+      : {};
+    const termsList = createTerms(resolve(cwd, "terms.json")).load().filter((t) => t.trim());
+    const termRe = termsList.length > 0 ? patternOf(termsList) : null;
+
+    const picked: string[] = [];
+    const payload: Array<Record<string, unknown>> = [];
+    for (const c of chunks) {
+      if (picked.length >= batch) break;
+      const block = state.getBlock(c.code);
+      if (!block?.sentences?.length) continue;
+      if (blockDone(translations, c.code, block.sentences)) continue;
+      const missingRef = block.sentences.find((s) => !block.refs?.[s.id]);
+      if (missingRef) die(`块 ${c.code} 句 ${missingRef.id} 缺豆包参考，先跑 doubao ${c.code}`);
+      picked.push(c.code);
+      payload.push({
+        code: c.code,
+        kind: c.kind,
+        sentences: block.sentences.map((s) => ({
+          id: s.id,
+          text: s.text,
+          ack: ackOf(block.refs![s.id]!.translation),
+          termHits: termRe ? [...new Set([...s.text.matchAll(termRe)].map((m) => m[0].toLowerCase()))] : [],
+          refs: block.refs![s.id]!,
+        })),
+      });
+    }
+    if (picked.length === 0) {
+      out({ ok: true, done: true, message: "所有块均已定稿，运行 collect" });
+      process.exit(0);
+    }
+    out({
+      ok: true,
+      batch: picked,
+      remainingBlocks: remainingCount(chunks, state, translations),
+      instructions: '对 batch 中每块每句产出 {text, ack}；ack 原样回显。载荷 {"<code>": {"<句id>": {"text": "…", "ack": "…"}}} 写入文件后运行 arbitrate submit <file>',
+      payload,
+    });
+    process.exit(0);
+  }
+
+  if (sub === "submit") {
+    const fileArg = process.argv[4];
+    if (!fileArg) die("缺少 <payload.json> 参数");
+    let submission: Submission;
+    try {
+      submission = JSON.parse(readFileSync(resolve(cwd, fileArg), "utf8"));
+    } catch (err) {
+      die(`载荷不是合法 JSON: ${err instanceof Error ? err.message : err}`);
+    }
+    const { path } = readInputState();
+    const state = new State(cwd);
+    const translations = existsSync(TRANSLATIONS_PATH)
+      ? (JSON.parse(readFileSync(TRANSLATIONS_PATH, "utf8")) as Record<string, Record<string, string>>)
+      : {};
+    const termsList = createTerms(resolve(cwd, "terms.json")).load().filter((t) => t.trim());
+    const chunks = chunksOf(path).filter((c) => c.kind !== "passthrough");
+    const termRe = termsList.length > 0 ? patternOf(termsList) : null;
+
+    const allProblems: Array<{ code: string; sentenceId: number; reason: string }> = [];
+    for (const [code, sentMap] of Object.entries(submission)) {
+      const block = state.getBlock(code);
+      if (!block?.sentences?.length) {
+        allProblems.push({ code, sentenceId: 0, reason: "未知块 code（先 split；勿自造块号）" });
+        continue;
+      }
+      const termHits: Record<number, string[]> = {};
+      if (termRe) {
+        for (const s of block.sentences) {
+          termHits[s.id] = [...new Set([...s.text.matchAll(termRe)].map((m) => m[0].toLowerCase()))];
+        }
+      }
+      const problems = validateBlock({ code, sentences: block.sentences, refs: block.refs ?? {}, termHits, submitted: sentMap });
+      for (const p of problems) allProblems.push({ code, ...p });
+    }
+    if (Object.keys(submission).length === 0) allProblems.push({ code: "", sentenceId: 0, reason: "载荷为空" });
+    if (allProblems.length > 0) {
+      console.error(JSON.stringify({ ok: false, problems: allProblems }, null, 2));
+      process.exit(2);
+    }
+    // 合入（CLI 独占写 translations.json）
+    for (const [code, sentMap] of Object.entries(submission)) {
+      translations[code] = { ...translations[code] };
+      for (const [id, sub2] of Object.entries(sentMap)) translations[code][id] = sub2.text;
+    }
+    writeFileSync(TRANSLATIONS_PATH, JSON.stringify(translations, null, 2) + "\n");
+    const total = chunks.filter((c) => state.getBlock(c.code)?.sentences?.length).length;
+    const done = total - remainingCount(chunks, state, translations);
+    out({ ok: true, merged: Object.keys(submission), blocksDone: done, blocksTotal: total, next: done >= total ? "collect" : "arbitrate next" });
+    process.exit(0);
+  }
+
+  die("用法: arbitrate next <input.md> [--batch N] | arbitrate submit <payload.json>");
 }
 
 // ---------- collect ----------

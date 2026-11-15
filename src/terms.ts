@@ -16,7 +16,7 @@ export interface Terms {
 }
 
 /** 加词形变体：复数 -s/-es、常见动词/形容词后缀，避免逐个手工列举 */
-function variants(term: string): string[] {
+export function variants(term: string): string[] {
   const t = term.toLowerCase();
   const v = [t];
   if (t.endsWith("y") && t.length > 2) v.push(t.slice(0, -1) + "ies");
@@ -28,7 +28,7 @@ function variants(term: string): string[] {
   return [...new Set(v)];
 }
 
-function pattern(list: string[]): RegExp {
+export function pattern(list: string[]): RegExp {
   const alts = list
     .flatMap(variants)
     .sort((a, b) => b.length - a.length) // 长词优先，避免 short 吞掉 shortcut
