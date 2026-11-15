@@ -16,10 +16,6 @@ fix verification problems. You do NOT write or edit the output file.
   Never invent references.
 - **Every sentence must be finalized.** `arbitrate submit` and `collect`
   both reject the batch if one sentence is missing, merged, or added.
-- All subcommands: stdout is JSON (for you to parse), stderr is human
-  logs.
-- Exit codes: 0 = success; 1 = usage/input error; 2 = verify/submit
-  found problems.
 
 ## Prerequisite: Doubao service
 
@@ -56,10 +52,22 @@ going further.** It cannot be skipped or batched with later steps.
 4. If the user says to skip terms — and only then — proceed without a
    list and say so in your final report.
 
-Validation command:
-
 ```bash
 npx tsx src/cli.ts terms input.md terms.json
+```
+
+- `terms.json` is maintained across articles. Reuse it next time, and
+  add new confirmed words to it — the list gets better with every
+  translation. Only the user adds/removes entries; never invent terms
+  the user has not confirmed.
+- During arbitration, keep every listed word untranslated at each place
+  it appears in that sentence.
+
+### 3. doubao — fetch references (one command, resumable)
+
+```bash
+npx tsx src/cli.ts doubao input.md          # all translatable blocks, serial
+npx tsx src/cli.ts doubao input.md 042 044  # subset, if you need one
 ```
 
 - Refs per sentence land in `artifacts/state.json` under
@@ -137,39 +145,21 @@ cannot check):
 npx tsx src/cli.ts collect input.md translations.json
 ```
 
-```json
-{ "ok": true, "output": "/path/to/input.bilingual.md" }
-```
-
-- Any missing sentence → exit 1 with a list `[{code, sentenceId}]`. No
-  file is written. Run `arbitrate next` for the missing blocks and
-  resubmit.
-- ⟦n⟧ placeholders in your translations are restored to the original
-  content by code. You just keep them in place, per the standard.
-
 ### 6. verify — completeness check
 
 ```bash
 npx tsx src/cli.ts verify input.md
-npx tsx src/cli.ts verify input.md output.md my-translations.json   # non-default names
 ```
 
-```json
-{ "ok": true, "output": "/path/to/input.bilingual.md", "problems": [] }
-```
-
-- Exit 0 = pass. Exit 2 = `problems` is not empty: fix each item, go
-  back to step 4 (only the affected sentences), then collect + verify
-  again.
-- Checks: passthrough blocks byte-for-byte, translatable originals in
-  place, placeholder match per sentence.
+- Exit 2 = fix each reported problem, go back to step 4 (only the
+  affected sentences), then collect + verify again.
 
 ## Debugging
 
 - `chunk <input.md>`: chunk only, nothing saved — quick look at block
   structure.
 - After an interrupt: just re-run the same step. Saved parts are reused.
-- Start over: delete the `artifacts/` directory.
+- Start over: delete the `artifacts/` directory (and `translations.json`).
 
 ---
 
