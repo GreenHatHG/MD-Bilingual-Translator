@@ -15,10 +15,11 @@ split → terms → (per batch) arbitrate next/submit → collect → verify
 - `doubao` fetches /translate + /explain per sentence, serial, saved to
   disk after every sentence (resume support).
 - `arbitrate next` picks the next un-arbitrated batch (CLI-chosen, cap
-  10) and prints source + refs + ack fingerprints; `arbitrate submit`
-  validates a payload (ids, ack, terms, placeholders) and is the only
-  writer of `translations.json` (`src/arbitrate.ts` holds the pure
-  validation logic).
+  10) and prints source + ack fingerprints (refs stay in
+  `artifacts/state.json`); `arbitrate submit` validates a payload (ids,
+  ack, terms, placeholders) and is the only writer of
+  `translations.json` (`src/arbitrate.ts` holds the pure validation
+  logic).
 - `collect` takes the agent's translations JSON and assembles the
   bilingual file.
 - `verify` checks the output for completeness.

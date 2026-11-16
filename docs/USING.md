@@ -88,6 +88,9 @@ npx tsx src/cli.ts arbitrate next input.md [--batch N]
 - The CLI picks the batch (default 5 blocks, `--batch` capped at 10 —
   quality degrades past that). You do not choose blocks — ever.
   Translate only what's in `payload`.
+- The payload carries `text`, `ack`, `termHits` — it does NOT inline the
+  Doubao refs (they bloat stdout past pi's output guard). Read refs from
+  `artifacts/state.json` → `blocks.<code>.refs.<sentenceId>`.
 - For each sentence in the payload: translate `text`, echo `ack`
   unchanged, and keep every `termHits` word form untranslated in
   `text`. One sentence in, one sentence out — do not merge, split, or
