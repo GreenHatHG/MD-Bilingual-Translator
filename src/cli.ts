@@ -7,7 +7,7 @@
  *                                                stdout is a compact summary unless --full
  *   doubao  <input.md> [<codes>|-a]           fetch Doubao refs; -a/omitted = all translatable blocks
  *   terms   <input.md> <terms.json>           validate the user-confirmed keep-in-English list
- *   arbitrate next <input.md> [--batch N]      print next batch to arbitrate (source + refs + ack fingerprints); CLI picks the batch
+ *   arbitrate next <input.md> [--batch N]      print next batch to arbitrate (source + ack fingerprints; refs stay in artifacts/state.json); CLI picks the batch
  *   arbitrate submit <payload.json>            validate one payload batch and merge into translations.json (CLI-exclusive writer)
  *   collect <input.md> <translations.json>   assemble the bilingual file atomically (translations.json is maintained by arbitrate)
  *   verify  <input.md> [output.md] [translations.json]  completeness check of the output, JSON report
