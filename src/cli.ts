@@ -17,7 +17,7 @@
  * translations.json) → collect → verify; on failure fix per report and re-run collect.
  */
 import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from "node:fs";
-import { resolve, dirname, basename } from "node:path";
+import { resolve, dirname, basename, relative } from "node:path";
 import { loadConfig } from "./env.js";
 import { splitIntoChunks, type Chunk } from "./markdown.js";
 import { splitBlockIntoSentences } from "./sentence.js";
@@ -63,11 +63,14 @@ function remainingCount(chunks: Chunk[], state: State, translations: Record<stri
   }).length;
 }
 
-/** submit uses this: reads the input filename from state.json (agent need not pass input) */
+/** submit uses this: reads the input path from state.json (agent need not pass input) */
 function readInputState(): { path: string; source: string } {
   const state = new State(cwd);
   const name = state.all.inputFile;
   if (!name) die("state.json has no inputFile; run split first");
+  // State written before the relative-path fix stored a bare filename; fall back to it.
+  const resolved = resolve(cwd, name);
+  if (existsSync(resolved)) return readInput(resolved);
   return readInput(name);
 }
 
@@ -83,7 +86,8 @@ if (cmd === "split") {
   const { path } = readInput(process.argv[3]);
   const chunks = chunksOf(path);
   const state = new State(cwd);
-  state.setInputFile(basename(path));
+  // Store cwd-relative so later steps (e.g. arbitrate submit from the repo root) can re-resolve it.
+  state.setInputFile(relative(cwd, path) || basename(path));
   // New article run: clear last run's finals so stale translations can never be reused.
   // Deleted automatically — the agent never manages this file's lifecycle.
   if (existsSync(TRANSLATIONS_PATH)) unlinkSync(TRANSLATIONS_PATH);
