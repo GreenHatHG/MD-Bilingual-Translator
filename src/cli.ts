@@ -223,7 +223,6 @@ if (cmd === "arbitrate") {
           text: s.text,
           ack: ackOf(block.refs![s.id]!.translation),
           termHits: termRe ? [...new Set([...s.text.matchAll(termRe)].map((m) => m[0].toLowerCase()))] : [],
-          refs: block.refs![s.id]!,
         })),
       });
     }
@@ -235,7 +234,7 @@ if (cmd === "arbitrate") {
       ok: true,
       batch: picked,
       remainingBlocks: remainingCount(chunks, state, translations),
-      instructions: 'Echo each ack unchanged; keep termHits words untranslated; one sentence in, one sentence out. See USING.md step 4.',
+      instructions: 'Echo each ack unchanged; keep termHits words untranslated; one sentence in, one sentence out. Doubao refs are NOT inline — read them from artifacts/state.json blocks.<code>.refs.<id>. See USING.md step 4.',
       payload,
     });
     process.exit(0);
