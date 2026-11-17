@@ -15,7 +15,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const CLI = ["npx", "tsx", "src/cli.ts"] as const;
-const TIMEOUT_MS = 15 * 60 * 1000; // Doubao calls can take minutes per sentence
+const TIMEOUT_MS = 60 * 60 * 1000; // Doubao calls can take minutes per sentence
 
 const latch = { tripped: false, reason: "" };
 // Terms gate: doubao/arbitrate_next refuse until terms_set succeeded this session.
@@ -274,8 +274,17 @@ export default function translateExtension(pi: ExtensionAPI) {
           progress.push(line);
           onUpdate?.({ content: [{ type: "text", text: progress.lines.join("\n") }], details: {} });
         });
+        // A timeout kill (SIGTERM → exit 143) is resumable, not fatal: cached
+        // sentences are skipped on the next run, so just tell the model to retry.
+        if (proc.killed && proc.code === 143) {
+          return result(
+            `doubao timed out after ${TIMEOUT_MS / 60000} min and was stopped — this is NOT fatal. Fetched sentences are cached (they show as "cached, skipping"), so call doubao again with the same inputMd to resume where it left off. Repeat until it finishes.`,
+            true,
+          );
+        }
         const resultText = proc.code === 0 ? proc.stdout : (proc.stderr || proc.stdout).trim();
-        return { content: [{ type: "text" as const, text: resultText }], details: { progress } };
+        if (proc.code !== 0) trip(`CLI exited ${proc.code} on: doubao\n${resultText}`);
+        return { content: [{ type: "text" as const, text: proc.code === 0 ? resultText : refused() }], details: { progress } };
       } catch (err) {
         trip(`tool doubao crashed: ${err instanceof Error ? err.message : String(err)}`);
         return result(refused(), true);
