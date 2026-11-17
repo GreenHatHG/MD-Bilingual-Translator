@@ -11,6 +11,7 @@
  * refuses until the user relaunches, because there is no shell escape hatch.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const CLI = ["npx", "tsx", "src/cli.ts"] as const;
@@ -58,8 +59,7 @@ interface SpawnResult {
   killed: boolean;
 }
 
-/** Spawn the CLI directly (pi.exec buffers, so it cannot stream progress). */
-async function spawnCli(args: string[], signal: AbortSignal | undefined, onLine: (line: string) => void, timeoutMs = TIMEOUT_MS): Promise<SpawnResult> {
+/** Spawn the CLI directly (pi.exec buffers, so it cannot stream progress). */async function spawnCli(args: string[], signal: AbortSignal | undefined, onLine: (line: string) => void, timeoutMs = TIMEOUT_MS): Promise<SpawnResult> {
   const { spawn } = await import("node:child_process");
   return new Promise((resolvePromise) => {
     const proc = spawn(CLI[0], [...CLI.slice(1), ...args], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
@@ -104,6 +104,36 @@ async function spawnCli(args: string[], signal: AbortSignal | undefined, onLine:
       resolvePromise({ stdout, stderr, code: 1, killed });
     });
   });
+}
+
+// Progress lines accumulate into a single growing text block, so the tool row
+// shows the full history like a terminal scrollback instead of one line at a time.
+const PROGRESS_PREVIEW_LINES = 6;
+class DoubaoProgress {
+  lines: string[] = [];
+  summary: string | null = null;
+  push(line: string) {
+    if (/^done: /.test(line)) this.summary = line;
+    else this.lines.push(line);
+  }
+  render(theme: { fg: (role: string, t: string) => string }, expanded: boolean, isPartial: boolean) {
+    const styled = this.lines.map((l) => theme.fg("toolOutput", l));
+    if (isPartial && !expanded) {
+      // Running, collapsed: terminal tail — you always see where it is now.
+      return new Text(styled.slice(-PROGRESS_PREVIEW_LINES).join("\n"), 0, 0);
+    }
+    if (!isPartial && !expanded && (this.lines.length > PROGRESS_PREVIEW_LINES || this.summary)) {
+      // Finished, collapsed: tail + summary, rest folds away until expand.
+      const parts = styled.slice(-PROGRESS_PREVIEW_LINES);
+      if (this.summary) parts.push(theme.fg("success", this.summary));
+      const skipped = Math.max(0, this.lines.length - PROGRESS_PREVIEW_LINES);
+      const hint = skipped > 0 ? `${theme.fg("muted", `... (${skipped} earlier lines, ctrl+o to expand)`)}\n` : "";
+      return new Text(hint + parts.join("\n"), 0, 0);
+    }
+    const all = [...styled];
+    if (this.summary) all.push(theme.fg("success", this.summary));
+    return new Text(all.join("\n"), 0, 0);
+  }
 }
 
 export default function translateExtension(pi: ExtensionAPI) {
@@ -227,20 +257,25 @@ export default function translateExtension(pi: ExtensionAPI) {
     parameters: Type.Object({
       inputMd: Type.String({ description: "Path to the source article, relative to the project root" }),
     }),
+    renderResult(result, { expanded, isPartial }, theme, context) {
+      const progress = (context.state.progress ??= new DoubaoProgress());
+      if (result.details?.progress) context.state.progress = result.details.progress;
+      return progress.render(theme, expanded, isPartial);
+    },
     async execute(_toolCallId, params, signal, onUpdate) {
       if (latch.tripped) return result(refused(), true);
       if (!gate.termsConfirmed) return result(gateRefused(), true);
       try {
         onUpdate?.({ content: [{ type: "text", text: "Fetching Doubao references (serial; can take many minutes)…" }], details: {} });
+        const progress = new DoubaoProgress();
         // pi.exec buffers output, so spawn directly to stream the CLI's per-sentence
-        // progress ([code] sentence i/n ... done) to the UI as it happens.
+        // progress to the UI; lines accumulate so earlier ones stay visible.
         const proc = await spawnCli(["doubao", (params as { inputMd: string }).inputMd, "-a"], signal, (line) => {
-          onUpdate?.({ content: [{ type: "text", text: line }], details: {} });
+          progress.push(line);
+          onUpdate?.({ content: [{ type: "text", text: progress.lines.join("\n") }], details: {} });
         });
-        if (proc.code === 0) return result(proc.stdout, false);
-        if (proc.code === 2) return result((proc.stderr || proc.stdout).trim(), true);
-        trip(`CLI exited ${proc.code} on: doubao\n${(proc.stderr || proc.stdout).trim()}`);
-        return result(refused(), true);
+        const resultText = proc.code === 0 ? proc.stdout : (proc.stderr || proc.stdout).trim();
+        return { content: [{ type: "text" as const, text: resultText }], details: { progress } };
       } catch (err) {
         trip(`tool doubao crashed: ${err instanceof Error ? err.message : String(err)}`);
         return result(refused(), true);

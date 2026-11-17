@@ -138,16 +138,35 @@ if (cmd === "doubao") {
   }
   const state = new State(cwd);
   const failed: string[] = [];
+  // Overall progress across every selected block, stamped on each line so a
+  // single line always tells the whole story (scrolling logs keep one line).
+  let totalSentences = 0;
+  let doneSentences = 0;
+  for (const c of codes) {
+    const b = state.getBlock(c);
+    if (!b?.sentences?.length) continue;
+    totalSentences += b.sentences.length;
+    doneSentences += Math.min(Object.keys(b.refs ?? {}).length, b.sentences.length);
+  }
+  const startedAt = Date.now();
+  const clock = () => new Date().toLocaleTimeString("en-GB");
+  const elapsed = () => {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  };
+  const stamp = () => `· overall ${doneSentences}/${totalSentences} · ${clock()} · elapsed ${elapsed()}`;
   for (const code of codes) {
     const block = state.getBlock(code);
     if (!block?.sentences?.length) {
       console.error(`Skipping ${code}: no sentence records (run split first)`);
       continue;
     }
-    if (block.refs && Object.keys(block.refs).length === block.sentences.length) {
-      console.error(`[${code}] cached, skipping`);
+    const cached = Math.min(Object.keys(block.refs ?? {}).length, block.sentences.length);
+    if (cached === block.sentences.length) {
+      console.error(`[${code}] cached ${cached}/${block.sentences.length} ${stamp()}`);
       continue;
     }
+    if (cached > 0) console.error(`[${code}] cached ${cached}/${block.sentences.length}, fetching rest ${stamp()}`);
     const refs: BlockState["refs"] = block.refs ?? {};
     for (const s of block.sentences) {
       if (refs[s.id]) continue; // already fetched, reuse
@@ -161,11 +180,14 @@ if (cmd === "doubao") {
         failed.push(code);
         break; // abort this block, move to the next
       }
-      process.stderr.write(" done\n");
+      doneSentences++;
+      process.stderr.write(` done ${stamp()}\n`);
       state.recordRefs(code, refs); // persisted per sentence; interrupted runs never refetch
     }
   }
   if (failed.length > 0) die(`Doubao failed for blocks: ${failed.join(", ")}. Fetched sentences are already persisted; re-run to retry only the missing ones.`);
+  const nBlocks = codes.filter((c) => state.getBlock(c)?.sentences?.length).length;
+  console.error(`done: ${doneSentences}/${totalSentences} sentences · ${nBlocks} blocks · ${clock()} · elapsed ${elapsed()}`);
   out({ ok: true, blocks: codes.length, requested: codes, note: "Next: arbitrate next" });
   process.exit(0);
 }
