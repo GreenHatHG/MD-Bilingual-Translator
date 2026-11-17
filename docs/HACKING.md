@@ -11,7 +11,13 @@ split → terms → (per batch) arbitrate next/submit → collect → verify
 ```
 
 - `split` chunks the Markdown and splits sentences; both land in
-  `artifacts/state.json`.
+  `artifacts/state.json`. A new run also clears last run's
+  `translations.json` and `artifacts/terms.json` (stale state can never
+  leak into a new article).
+- `terms` validates the user-confirmed **article list** (strict: a word
+  absent from the source → exit 2) and writes it to
+  `artifacts/terms.json`. The **global list** `<cwd>/terms.json` is
+  persistent across articles and exempt from the missing check.
 - `doubao` fetches /translate + /explain per sentence, serial, saved to
   disk after every sentence (resume support).
 - `arbitrate next` picks the next un-arbitrated batch (CLI-chosen, cap
@@ -30,7 +36,7 @@ split → terms → (per batch) arbitrate next/submit → collect → verify
 |---|---|
 | `src/cli.ts` | Subcommand dispatch, argument parsing, all I/O. Each subcommand block ends with `process.exit`. |
 | `src/arbitrate.ts` | `validateBlock`/`ackOf`/`blockDone`: pure per-batch arbitration checks (ids, ack, terms, placeholders). No I/O. |
-| `src/terms.ts` | `createTerms`: keep-in-English list, word-shape matching (`variants`/`pattern`). |
+| `src/terms.ts` | `createTerms`: keep-in-English lists (global `<cwd>/terms.json` via `loadGlobal`, per-article list via `load`), word-shape matching (`variants`/`pattern`). |
 | `src/markdown.ts` | `splitIntoChunks`: remark AST → ordered blocks. Only top-level nodes. |
 | `src/sentence.ts` | `splitBlockIntoSentences`: per-line ICU split, mask/restore of ⟦n⟧ placeholders. |
 | `src/doubao.ts` | `createDoubao`: serial HTTP client, retries with backoff, throws `DoubaoError` on final failure (no fallback). Also `health()`. |

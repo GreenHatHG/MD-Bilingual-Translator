@@ -46,23 +46,30 @@ going further.** It cannot be skipped or batched with later steps.
 
 1. Read the source article and propose words/phrases that should stay
    in English (product names, agent jargon like `subagent`,
-   `context window`, `skill`). Merge in any words already present in an
-   existing `terms.json` from earlier translations.
+   `context window`, `skill`). Merge in any words already present in the
+   global `terms.json` from earlier translations.
 2. Post the proposed list to the user and **end your turn.** The user
    decides what goes in — this is a user decision, not yours.
-3. Only after the user confirms: write the final list to `terms.json`
-   (JSON string array) and validate it.
-4. If the user says to skip terms — and only then — proceed without a
-   list and say so in your final report.
+3. Only after the user confirms: write the final article list to a temp
+   file (JSON string array) and validate it. The check is strict: a
+   proposed word that never appears in this article exits 2 with the
+   `missing` list — remove those words and resubmit. Global `terms.json`
+   words are exempt (they may be kept for future articles).
+4. If the user says to skip terms — and only then — call `terms_set` with
+   an empty list (that also opens the doubao/arbitrate gate) and say so
+   in your final report.
 
 ```bash
-npx tsx src/cli.ts terms input.md terms.json
+npx tsx src/cli.ts terms input.md article-terms.json
 ```
 
-- `terms.json` is maintained across articles. Reuse it next time, and
-  add new confirmed words to it — the list gets better with every
-  translation. Only the user adds/removes entries; never invent terms
-  the user has not confirmed.
+- On success the CLI writes the confirmed article list to
+  `artifacts/terms.json`; arbitration enforces the union of that list
+  and the global `terms.json`. You never write either file.
+- `terms.json` (global) is maintained across articles. Reuse it next
+  time, and add new confirmed words to it — the list gets better with
+  every translation. Only the user adds/removes entries; never invent
+  terms the user has not confirmed.
 - During arbitration, keep every listed word untranslated at each place
   it appears in that sentence.
 

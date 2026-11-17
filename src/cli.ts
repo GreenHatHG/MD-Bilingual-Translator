@@ -6,7 +6,8 @@
  *   split   <input.md> [--full]                  chunk + sentence split, persisted (deletes stale translations.json);
  *                                                stdout is a compact summary unless --full
  *   doubao  <input.md> [<codes>|-a]           fetch Doubao refs; -a/omitted = all translatable blocks
- *   terms   <input.md> <terms.json>           validate the user-confirmed keep-in-English list
+ *   terms   <input.md> <article-terms.json>  validate the user-confirmed list for THIS article
+ *                                          (strict: unknown words → exit 2; global terms.json auto-loaded, exempt; writes artifacts/terms.json)
  *   arbitrate next <input.md> [--batch N]      print next batch to arbitrate (source + ack fingerprints; refs stay in artifacts/state.json); CLI picks the batch
  *   arbitrate submit <payload.json>            validate one payload batch and merge into translations.json (CLI-exclusive writer)
  *   collect <input.md> <translations.json>   assemble the bilingual file atomically (translations.json is maintained by arbitrate)
@@ -16,7 +17,7 @@
  * → arbitrate next/submit loop (CLI picks batches, validates, exclusively writes
  * translations.json) → collect → verify; on failure fix per report and re-run collect.
  */
-import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { resolve, dirname, basename, relative } from "node:path";
 import { loadConfig } from "./env.js";
 import { splitIntoChunks, type Chunk } from "./markdown.js";
@@ -74,6 +75,13 @@ function readInputState(): { path: string; source: string } {
   return readInput(name);
 }
 
+/** Terms for arbitration: global terms.json + confirmed article list (artifacts/terms.json) */
+function unionTerms(): string[] {
+  const global = createTerms(resolve(cwd, "terms.json"));
+  const article = createTerms(resolve(cwd, "artifacts/terms.json"));
+  return [...new Set([...global.load(), ...article.load()].filter((t) => t.trim()))];
+}
+
 // ---------- chunk ----------
 if (cmd === "chunk") {
   const { path } = readInput(process.argv[3]);
@@ -89,8 +97,11 @@ if (cmd === "split") {
   // Store cwd-relative so later steps (e.g. arbitrate submit from the repo root) can re-resolve it.
   state.setInputFile(relative(cwd, path) || basename(path));
   // New article run: clear last run's finals so stale translations can never be reused.
-  // Deleted automatically — the agent never manages this file's lifecycle.
+  // Also clear the previous article's confirmed list; the new list is written at terms.
+  // Deleted automatically — the agent never manages these files' lifecycle.
   if (existsSync(TRANSLATIONS_PATH)) unlinkSync(TRANSLATIONS_PATH);
+  const ARTICLE_TERMS = resolve(cwd, "artifacts/terms.json");
+  if (existsSync(ARTICLE_TERMS)) unlinkSync(ARTICLE_TERMS);
   const blocks: Array<{ code: string; kind: string; sentenceCount: number; sentences?: Array<{ id: number; text: string }> }> = [];
   const full = process.argv.slice(3).includes("--full");
   for (const c of chunks) {
@@ -163,19 +174,32 @@ if (cmd === "doubao") {
 if (cmd === "terms") {
   const { source } = readInput(process.argv[3]);
   const fileArg = process.argv[4];
-  if (!fileArg) die("Missing <terms.json> argument (JSON string array)");
+  if (!fileArg) die("Missing <article-terms.json> argument (JSON string array of the user-confirmed list for THIS article)");
   const terms = createTerms(resolve(cwd, fileArg));
   const list = terms.load().filter((t) => t.trim());
+  const globalList = terms.loadGlobal().filter((t) => t.trim());
   const { hits, missing } = terms.check(list, source);
+  if (missing.length > 0) {
+    console.error(JSON.stringify({
+      ok: false,
+      missing,
+      note: "missing = article terms that never appear in the source (usually a typo). Remove them and resubmit, or re-confirm with the user. Global terms.json words are exempt.",
+    }, null, 2));
+    process.exit(2);
+  }
+  // Confirmed article list persisted for arbitrate (union with global terms.json); CLI-exclusive writer.
+  mkdirSync(resolve(cwd, "artifacts"), { recursive: true });
+  createTerms(resolve(cwd, "artifacts/terms.json")).save(list);
+  const { hits: globalHits } = terms.check(globalList, source);
   out({
     ok: true,
     file: terms.file,
     count: list.length,
+    globalCount: globalList.length,
     hits,
-    missing,
-    note: missing.length > 0
-      ? "missing = words in the list that never appear in the source (usually a typo) — fix terms.json first"
-      : "missing is empty = pass. Next: doubao",
+    globalHits,
+    savedTo: "artifacts/terms.json",
+    note: "Article terms confirmed. Next: doubao",
   });
   process.exit(0);
 }
@@ -202,7 +226,7 @@ if (cmd === "arbitrate") {
       die(`translations.json is not valid JSON (it is maintained by arbitrate submit): ${err instanceof Error ? err.message : err}`);
     }
     const translations = translations0!;
-    const termsList = createTerms(resolve(cwd, "terms.json")).load().filter((t) => t.trim());
+    const termsList = unionTerms();
     const termRe = termsList.length > 0 ? patternOf(termsList) : null;
 
     const picked: string[] = [];
@@ -259,7 +283,7 @@ if (cmd === "arbitrate") {
     } catch (err) {
       die(`translations.json is not valid JSON (it is maintained by arbitrate submit): ${err instanceof Error ? err.message : err}`);
     }
-    const termsList = createTerms(resolve(cwd, "terms.json")).load().filter((t) => t.trim());
+    const termsList = unionTerms();
     const chunks = chunksOf(path).filter((c) => c.kind !== "passthrough");
     const termRe = termsList.length > 0 ? patternOf(termsList) : null;
 

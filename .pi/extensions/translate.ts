@@ -17,6 +17,9 @@ const CLI = ["npx", "tsx", "src/cli.ts"] as const;
 const TIMEOUT_MS = 15 * 60 * 1000; // Doubao calls can take minutes per sentence
 
 const latch = { tripped: false, reason: "" };
+// Terms gate: doubao/arbitrate_next refuse until terms_set succeeded this session.
+// The confirm dialog inside terms_set is the human checkpoint; the gate closes the skip path.
+const gate = { termsConfirmed: false };
 
 function trip(reason: string) {
   latch.tripped = true;
@@ -42,6 +45,65 @@ async function runCli(pi: ExtensionAPI, args: string[], signal?: AbortSignal): P
 
 function result(text: string, isError: boolean) {
   return { content: [{ type: "text" as const, text }], details: {}, isError };
+}
+
+function gateRefused(): string {
+  return "Terms not confirmed yet — run terms_set first (step 2: propose keep-in-English words, the user confirms). Never skip or batch this step.";
+}
+
+interface SpawnResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+  killed: boolean;
+}
+
+/** Spawn the CLI directly (pi.exec buffers, so it cannot stream progress). */
+async function spawnCli(args: string[], signal: AbortSignal | undefined, onLine: (line: string) => void, timeoutMs = TIMEOUT_MS): Promise<SpawnResult> {
+  const { spawn } = await import("node:child_process");
+  return new Promise((resolvePromise) => {
+    const proc = spawn(CLI[0], [...CLI.slice(1), ...args], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let killed = false;
+    let stderrBuf = "";
+    const kill = () => {
+      if (!killed) {
+        killed = true;
+        proc.kill("SIGTERM");
+        setTimeout(() => {
+          if (!proc.killed) proc.kill("SIGKILL");
+        }, 5000);
+      }
+    };
+    if (signal?.aborted) kill();
+    else signal?.addEventListener("abort", kill, { once: true });
+    const timeoutId = setTimeout(kill, timeoutMs);
+    proc.stdout?.on("data", (d: Buffer) => {
+      stdout += d.toString();
+    });
+    proc.stderr?.on("data", (d: Buffer) => {
+      const text = d.toString();
+      stderr += text;
+      stderrBuf += text;
+      let idx: number;
+      while ((idx = stderrBuf.indexOf("\n")) !== -1) {
+        const line = stderrBuf.slice(0, idx).trim();
+        stderrBuf = stderrBuf.slice(idx + 1);
+        if (line) onLine(line);
+      }
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", kill);
+      resolvePromise({ stdout, stderr, code: code ?? 0, killed });
+    });
+    proc.on("error", () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", kill);
+      resolvePromise({ stdout, stderr, code: 1, killed });
+    });
+  });
 }
 
 export default function translateExtension(pi: ExtensionAPI) {
@@ -106,23 +168,49 @@ export default function translateExtension(pi: ExtensionAPI) {
     name: "terms_set",
     label: "terms_set",
     description:
-      "Step 2: write the user-confirmed keep-in-English word list to terms.json and validate it against the source. HARD STOP: the user must confirm the list before you call this. Do not invent terms.",
+      "Step 2: propose keep-in-English words to the user in a confirm dialog, then validate the list against the source (strict: words absent from the article are rejected — fix and resubmit). terms = the article list; persist = words the user asked to remember for future articles (appended to global terms.json). Do not invent terms; seed your proposal from global terms.json.",
     parameters: Type.Object({
       inputMd: Type.String({ description: "Path to the source article, relative to the project root" }),
-      terms: Type.Array(Type.String(), { description: "Keep-in-English words/phrases, exactly as the user confirmed" }),
+      terms: Type.Array(Type.String(), { description: "Keep-in-English words/phrases for THIS article, exactly as proposed" }),
+      persist: Type.Optional(Type.Array(Type.String(), { description: "Words the user explicitly asked to remember for future articles (appended to global terms.json)" })),
     }),
-    async execute(_toolCallId, params, signal) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (latch.tripped) return result(refused(), true);
+      const p = params as { inputMd: string; terms: string[]; persist?: string[] };
       try {
+        // Human checkpoint (TUI only; headless -p runs have no UI and are user-launched).
+        if (ctx.hasUI) {
+          const listText = p.terms.map((t) => `- ${t}`).join("\n");
+          const ok = await ctx.ui.confirm(
+            "Terms list",
+            `Keep these in English for this article?\n\n${listText}`,
+          );
+          if (!ok) {
+            const suggestion = await ctx.ui.input("Adjustments?", "e.g. remove X, add Y, or 'keep MCP anyway'");
+            return result(
+              `User rejected the terms list${suggestion ? ` with feedback: ${suggestion}` : "."} Revise the list per the feedback and call terms_set again. Do not proceed to doubao until terms_set succeeds.`,
+              true,
+            );
+          }
+        }
         // The CLI reads terms from a file; pass the list via a temp file so the
         // model never writes into the repo.
         const fs = await import("node:fs");
         const os = await import("node:os");
         const path = await import("node:path");
         const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "terms-")), "terms.json");
-        fs.writeFileSync(file, JSON.stringify((params as { terms: string[] }).terms, null, 2));
-        const r = await runCli(pi, ["terms", (params as { inputMd: string }).inputMd, file], signal);
+        fs.writeFileSync(file, JSON.stringify(p.terms, null, 2));
+        const r = await runCli(pi, ["terms", p.inputMd, file], signal);
         if (r.fatal || r.rejected) return result(r.output, true);
+        if (p.persist?.length) {
+          // User-confirmed additions to the global list; merge without duplicates.
+          const globalPath = path.resolve("terms.json");
+          const existing = fs.existsSync(globalPath)
+            ? (JSON.parse(fs.readFileSync(globalPath, "utf8")) as string[])
+            : [];
+          fs.writeFileSync(globalPath, JSON.stringify([...new Set([...existing, ...p.persist])], null, 2) + "\n");
+        }
+        gate.termsConfirmed = true;
         return result(r.output, false);
       } catch (err) {
         trip(`tool terms_set crashed: ${err instanceof Error ? err.message : String(err)}`);
@@ -141,11 +229,18 @@ export default function translateExtension(pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, signal, onUpdate) {
       if (latch.tripped) return result(refused(), true);
+      if (!gate.termsConfirmed) return result(gateRefused(), true);
       try {
         onUpdate?.({ content: [{ type: "text", text: "Fetching Doubao references (serial; can take many minutes)…" }], details: {} });
-        const r = await runCli(pi, ["doubao", (params as { inputMd: string }).inputMd, "-a"], signal);
-        if (r.fatal || r.rejected) return result(r.output, true);
-        return result(r.output, false);
+        // pi.exec buffers output, so spawn directly to stream the CLI's per-sentence
+        // progress ([code] sentence i/n ... done) to the UI as it happens.
+        const proc = await spawnCli(["doubao", (params as { inputMd: string }).inputMd, "-a"], signal, (line) => {
+          onUpdate?.({ content: [{ type: "text", text: line }], details: {} });
+        });
+        if (proc.code === 0) return result(proc.stdout, false);
+        if (proc.code === 2) return result((proc.stderr || proc.stdout).trim(), true);
+        trip(`CLI exited ${proc.code} on: doubao\n${(proc.stderr || proc.stdout).trim()}`);
+        return result(refused(), true);
       } catch (err) {
         trip(`tool doubao crashed: ${err instanceof Error ? err.message : String(err)}`);
         return result(refused(), true);
@@ -164,6 +259,7 @@ export default function translateExtension(pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, signal) {
       if (latch.tripped) return result(refused(), true);
+      if (!gate.termsConfirmed) return result(gateRefused(), true);
       try {
         const p = params as { inputMd: string; batch?: number };
         const args = ["arbitrate", "next", p.inputMd];

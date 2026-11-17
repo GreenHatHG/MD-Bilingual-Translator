@@ -13,6 +13,8 @@ export interface Terms {
   save(list: string[]): void;
   /** 每个词在源文中的出现情况；missing = 词单里有但文章没有（拼写错误提醒） */
   check(list: string[], source: string): { hits: Record<string, number>; missing: string[] };
+  /** 全局词单（跨文章持久，如 MCP）：参与命中匹配，豁免 missing 检查 */
+  loadGlobal(): string[];
 }
 
 /** 加词形变体：复数 -s/-es、常见动词/形容词后缀，避免逐个手工列举 */
@@ -41,22 +43,32 @@ function short(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function loadList(path: string): string[] {
+  if (!existsSync(path)) return [];
+  let data: unknown;
+  try {
+    data = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    throw new Error(`terms 文件不是合法 JSON: ${path} — ${short(err)}`);
+  }
+  if (!Array.isArray(data) || data.some((x) => typeof x !== "string")) {
+    throw new Error(`terms 文件格式错误（应为字符串数组）: ${path}`);
+  }
+  return data as string[];
+}
+
 export function createTerms(file: string): Terms {
   const path = resolve(file);
-  return {
+  // 固定约定：全局词单 = <cwd>/terms.json（arbitrate 已硬编码该路径），与 file 不同才加载
+  const globalPath = resolve(process.cwd(), "terms.json");
+  const inst: Terms = {
     file: path,
     load() {
-      if (!existsSync(path)) return [];
-      let data: unknown;
-      try {
-        data = JSON.parse(readFileSync(path, "utf8"));
-      } catch (err) {
-        throw new Error(`terms 文件不是合法 JSON: ${path} — ${short(err)}`);
-      }
-      if (!Array.isArray(data) || data.some((x) => typeof x !== "string")) {
-        throw new Error(`terms 文件格式错误（应为字符串数组）: ${path}`);
-      }
-      return data as string[];
+      return loadList(path);
+    },
+    loadGlobal() {
+      if (path === globalPath) return loadList(path); // file 本身就是全局词单，避免重复加载
+      return existsSync(globalPath) ? loadList(globalPath) : [];
     },
     save(list) {
       writeFileSync(path, JSON.stringify(list, null, 2) + "\n");
@@ -74,4 +86,5 @@ export function createTerms(file: string): Terms {
       return { hits, missing };
     },
   };
+  return inst;
 }
