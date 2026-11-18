@@ -59,7 +59,8 @@ interface SpawnResult {
   killed: boolean;
 }
 
-/** Spawn the CLI directly (pi.exec buffers, so it cannot stream progress). */async function spawnCli(args: string[], signal: AbortSignal | undefined, onLine: (line: string) => void, timeoutMs = TIMEOUT_MS): Promise<SpawnResult> {
+/** Spawn the CLI directly (pi.exec buffers, so it cannot stream progress). */
+async function spawnCli(args: string[], signal: AbortSignal | undefined, onLine: (line: string) => void, timeoutMs = TIMEOUT_MS): Promise<SpawnResult> {
   const { spawn } = await import("node:child_process");
   return new Promise((resolvePromise) => {
     const proc = spawn(CLI[0], [...CLI.slice(1), ...args], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
@@ -258,9 +259,16 @@ export default function translateExtension(pi: ExtensionAPI) {
       inputMd: Type.String({ description: "Path to the source article, relative to the project root" }),
     }),
     renderResult(result, { expanded, isPartial }, theme, context) {
-      const progress = (context.state.progress ??= new DoubaoProgress());
       if (result.details?.progress) context.state.progress = result.details.progress;
-      return progress.render(theme, expanded, isPartial);
+      const progress = (context.state.progress ??= new DoubaoProgress());
+      // Session restores / stale details can yield a plain object without render().
+      const p = progress instanceof DoubaoProgress ? progress : Object.assign(new DoubaoProgress(), progress);
+      // Partial updates and error results carry text in content, not details.progress.
+      if (!p.lines.length && !p.summary) {
+        const text = result.content?.[0]?.type === "text" ? result.content[0].text : "";
+        return new Text(theme.fg(result.isError ? "error" : "toolOutput", text), 0, 0);
+      }
+      return p.render(theme, expanded, isPartial);
     },
     async execute(_toolCallId, params, signal, onUpdate) {
       if (latch.tripped) return result(refused(), true);
@@ -272,7 +280,7 @@ export default function translateExtension(pi: ExtensionAPI) {
         // progress to the UI; lines accumulate so earlier ones stay visible.
         const proc = await spawnCli(["doubao", (params as { inputMd: string }).inputMd, "-a"], signal, (line) => {
           progress.push(line);
-          onUpdate?.({ content: [{ type: "text", text: progress.lines.join("\n") }], details: {} });
+          onUpdate?.({ content: [{ type: "text", text: progress.lines.join("\n") }], details: { progress } });
         });
         // A timeout kill (SIGTERM → exit 143) is resumable, not fatal: cached
         // sentences are skipped on the next run, so just tell the model to retry.
@@ -284,7 +292,7 @@ export default function translateExtension(pi: ExtensionAPI) {
         }
         const resultText = proc.code === 0 ? proc.stdout : (proc.stderr || proc.stdout).trim();
         if (proc.code !== 0) trip(`CLI exited ${proc.code} on: doubao\n${resultText}`);
-        return { content: [{ type: "text" as const, text: proc.code === 0 ? resultText : refused() }], details: { progress } };
+        return { content: [{ type: "text" as const, text: proc.code === 0 ? resultText : refused() }], details: { progress }, isError: proc.code !== 0 };
       } catch (err) {
         trip(`tool doubao crashed: ${err instanceof Error ? err.message : String(err)}`);
         return result(refused(), true);
