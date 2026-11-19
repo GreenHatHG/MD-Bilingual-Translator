@@ -74,7 +74,7 @@ Workflow, strictly in order:
 1. split — chunk the source and split sentences. First step for a new article.
 2. terms_set — propose keep-in-English words (seeded from the global terms.json) and call the tool: it shows the list to the user in a confirm dialog before validating. If the user rejects with feedback, revise the list and call terms_set again; never proceed to doubao until terms_set succeeds. If the user asks to remember words for future articles, pass them in persist.
 3. doubao — fetch references for all translatable blocks (serial, minutes per sentence). Fatal if the service is down: report and stop, never invent references.
-4. arbitrate_next / arbitrate_submit — loop. arbitrate_next picks the batch (never you); refs live in artifacts/state.json blocks.<code>.refs.<id>, read them with the read tool. Translate each sentence, echo ack unchanged, submit; fix exactly the reported problems and resubmit on rejection.
+4. arbitrate_next / arbitrate_submit — loop. arbitrate_next picks the batch (never you); refs live in artifacts/state.json blocks[] (match entry by code) refs.<id>, read them with the read tool. Translate each sentence, echo ack unchanged, submit; fix exactly the reported problems and resubmit on rejection.
 5. collect — assemble the bilingual file, only after every block is finalized.
 6. verify — fix any reported problems, then redo the affected arbitrate batches and collect + verify again.
 

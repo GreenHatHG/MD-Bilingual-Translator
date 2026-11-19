@@ -40,7 +40,7 @@ split → terms → (per batch) arbitrate next/submit → collect → verify
 | `src/markdown.ts` | `splitIntoChunks`: remark AST → ordered blocks. Only top-level nodes. |
 | `src/sentence.ts` | `splitBlockIntoSentences`: per-line ICU split, mask/restore of ⟦n⟧ placeholders. |
 | `src/doubao.ts` | `createDoubao`: serial HTTP client, retries with backoff, throws `DoubaoError` on final failure (no fallback). Also `health()`. |
-| `src/state.ts` | `State`: `artifacts/state.json` read/write. Global JSON file, flushed on every record. |
+| `src/state.ts` | `State`: `artifacts/state.json` read/write. Blocks stored as a code-sorted array (old Record format auto-migrates on load). Global JSON file, flushed on every record. |
 | `src/env.ts` | `.env` parsing → `Config` (doubaoBaseUrl, doubaoRetries, doubaoTimeoutMs). |
 
 Dependencies are only `remark-parse`, `remark-gfm`,
@@ -73,7 +73,10 @@ Dependencies are only `remark-parse`, `remark-gfm`,
 - Translatable: `code` = `007` (no suffix), `kind` = para/heading/quote/list.
 - Passthrough content: `code` = `010p` — copied to output unchanged.
 - Blank gaps: `code` = `011b` — spacing between blocks.
-- Codes are global, zero-padded, sequential. They double as state keys.
+- Codes are global, zero-padded, sequential. In `state.json` they are a
+  `code` field on each block entry (array, sorted numerically), not
+  object keys — `JSON.stringify` hoists integer-like keys (`"100"`
+  before `"000"`), which scrambles the file order agents read.
 - Sentence ids are per-block, start at 1, continuous across lines;
   `lineIds[i]` lists the ids on line i (empty array for blank lines).
   `collect` rebuilds the translation block line-by-line with it.
@@ -89,7 +92,7 @@ through the same call's `restore` (collect re-splits to get it).
 ## Tests
 
 ```bash
-npm test        # node:test, markdown + sentence suites (18 cases)
+npm test        # node:test, markdown + sentence + state + terms suites (37 cases)
 npm run build   # tsc --noEmit
 ```
 

@@ -304,7 +304,7 @@ export default function translateExtension(pi: ExtensionAPI) {
     name: "arbitrate_next",
     label: "arbitrate_next",
     description:
-      "Step 4a: get the next batch (CLI picks the blocks; default 5, max 10). Returns compact payload: id, text, ack (echo unchanged), termHits (keep untranslated). Doubao refs are NOT inline — read artifacts/state.json blocks.<code>.refs.<id> with the read tool.",
+      "Step 4a: get the next batch (CLI picks the blocks; default 5, max 10). Returns compact payload: id, text, ack (echo unchanged), termHits (keep untranslated). Doubao refs are NOT inline — read artifacts/state.json blocks[] (match entry by code) refs.<id> with the read tool.",
     parameters: Type.Object({
       inputMd: Type.String({ description: "Path to the source article, relative to the project root" }),
       batch: Type.Optional(Type.Number({ description: "Batch size, 1-10. Default 5. Do not exceed 10." })),

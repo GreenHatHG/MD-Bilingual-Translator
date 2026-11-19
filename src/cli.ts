@@ -123,7 +123,7 @@ if (cmd === "doubao") {
   const { path } = readInput(process.argv[3]);
   const rest = process.argv.slice(4);
   const state0 = new State(cwd);
-  const allCodes = Object.keys(state0.all.blocks).filter((c) => state0.getBlock(c)?.sentences?.length);
+  const allCodes = state0.all.blocks.map((b) => b.code).filter((c) => state0.getBlock(c)?.sentences?.length);
   let codes: string[];
   if (rest.length === 0 || rest[0] === "-a") {
     codes = allCodes;
@@ -280,7 +280,7 @@ if (cmd === "arbitrate") {
       ok: true,
       batch: picked,
       remainingBlocks: remainingCount(chunks, state, translations),
-      instructions: 'Echo each ack unchanged; keep termHits words untranslated; one sentence in, one sentence out. Doubao refs are NOT inline — read them from artifacts/state.json blocks.<code>.refs.<id>. See USING.md step 4.',
+      instructions: 'Echo each ack unchanged; keep termHits words untranslated; one sentence in, one sentence out. Doubao refs are NOT inline — read them from artifacts/state.json blocks[] (match entry by code) refs.<id>. See USING.md step 4.',
       payload,
     });
     process.exit(0);

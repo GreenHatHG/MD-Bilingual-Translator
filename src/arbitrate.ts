@@ -63,7 +63,7 @@ export function validateBlock(input: BlockCheck): Array<{ sentenceId: number; re
       continue;
     }
     if (sub.ack !== ackOf(ref.translation)) {
-      problems.push({ sentenceId: s.id, reason: `ack mismatch (${sub.ack || "empty"}) — read artifacts/state.json blocks.${input.code}.refs.${s.id} first, then finalize` });
+      problems.push({ sentenceId: s.id, reason: `ack mismatch (${sub.ack || "empty"}) — read artifacts/state.json blocks[] (match entry by code) refs.${s.id} first, then finalize` });
     }
     // terms 命中必须原样保留
     for (const hit of input.termHits[s.id] ?? []) {
