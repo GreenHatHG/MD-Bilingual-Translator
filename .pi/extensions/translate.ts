@@ -188,11 +188,14 @@ export default function translateExtension(pi: ExtensionAPI) {
     (p) => ["collect", p.inputMd, "translations.json"],
   );
 
+  // verify's CLI signature is <input.md> [output.md] [translations.json] — passing
+  // translations.json here would land in the output slot and get resolved next to the
+  // source file. CLI defaults already match collect's output path and root translations.json.
   simpleTool(
     "verify",
     "Step 6: completeness check of the bilingual output. Problems come back as a JSON report — fix and re-run collect.",
     { inputMd: Type.String({ description: "Path to the source article, relative to the project root" }) },
-    (p) => ["verify", p.inputMd, "translations.json"],
+    (p) => ["verify", p.inputMd],
   );
 
   pi.registerTool({
